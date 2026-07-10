@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "worker:dev": "wrangler dev",
     "worker:deploy": "wrangler deploy",
-    "api:dev": "wrangler dev --config wrangler.api.jsonc",
+    "api:dev": "wrangler dev --config wrangler.api.jsonc --var ALLOW_DEVELOPMENT_ORIGINS:true",
     "api:deploy": "wrangler deploy --config wrangler.api.jsonc",
     "db:migrations": "wrangler d1 migrations apply vault-db --remote --config wrangler.api.jsonc"
   },

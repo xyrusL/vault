@@ -5,6 +5,7 @@ import {
   Bot,
   Briefcase,
   CalendarClock,
+  Check,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
@@ -849,14 +850,40 @@ function DetailItem({ label, children, className = "" }) {
 }
 
 function CopyButton({ value, label, compact = false }) {
+  const [copiedAt, setCopiedAt] = useState(0);
+  const copied = copiedAt > 0;
+
+  useEffect(() => {
+    if (!copiedAt) return undefined;
+    const resetTimer = window.setTimeout(() => setCopiedAt(0), 1500);
+    return () => window.clearTimeout(resetTimer);
+  }, [copiedAt]);
+
+  async function handleCopy() {
+    if (!value || !navigator.clipboard) return;
+
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedAt(Date.now());
+    } catch {
+      setCopiedAt(0);
+    }
+  }
+
   return (
     <button
       type="button"
-      onClick={() => navigator.clipboard?.writeText(value)}
-      className={`grid shrink-0 place-items-center text-slate-400 hover:text-cyan-300 ${compact ? "inline-copy-button size-7 rounded-md hover:bg-white/5" : "size-9 rounded-lg border border-white/10 hover:border-cyan-300/30"}`}
-      aria-label={label}
+      onClick={handleCopy}
+      disabled={!value}
+      className={`grid shrink-0 place-items-center disabled:cursor-not-allowed disabled:opacity-40 ${copied ? "text-emerald-300" : "text-slate-400 hover:text-cyan-300"} ${compact ? "inline-copy-button size-7 rounded-md hover:bg-white/5" : "size-9 rounded-lg border border-white/10 hover:border-cyan-300/30"}`}
+      aria-label={copied ? "Copied" : label}
+      title={copied ? "Copied" : label}
     >
-      <Copy className={compact ? "size-3.5" : "size-4"} />
+      {copied ? (
+        <Check className={compact ? "size-3.5" : "size-4"} />
+      ) : (
+        <Copy className={compact ? "size-3.5" : "size-4"} />
+      )}
     </button>
   );
 }

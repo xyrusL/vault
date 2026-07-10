@@ -25,12 +25,16 @@ class ClientError extends Error {
   }
 }
 
+function isLocalHostname(hostname) {
+  return ['localhost', '127.0.0.1', '[::1]'].includes(hostname)
+}
+
 function isDevelopmentOrigin(origin) {
   if (!origin) return false
 
   try {
     const url = new URL(origin)
-    return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    return url.protocol === 'http:' && isLocalHostname(url.hostname)
   } catch {
     return false
   }
@@ -42,13 +46,14 @@ function isAllowedBrowserOrigin(origin, env) {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean)
-  return allowedOrigins.includes(origin) || isDevelopmentOrigin(origin)
+  return allowedOrigins.includes(origin)
+    || (env.ALLOW_DEVELOPMENT_ORIGINS === 'true' && isDevelopmentOrigin(origin))
 }
 
 function corsHeaders(request, env) {
   const origin = request.headers.get('origin')
   if (!origin) return {}
-  const localWorker = ['localhost', '127.0.0.1'].includes(new URL(request.url).hostname)
+  const localWorker = isLocalHostname(new URL(request.url).hostname)
   if (!localWorker && !isAllowedBrowserOrigin(origin, env)) return {}
 
   return {
@@ -115,6 +120,15 @@ async function hashClientIdentifier(request, env) {
   return toBase64Url(new Uint8Array(digest))
 }
 
+function getDeviceType(request) {
+  const userAgent = (request.headers.get('user-agent') || '').toLowerCase()
+  if (/smart-?tv|hbbtv|appletv|google ?tv|netcast|web0s|tizen|roku|aft[bmrt]/.test(userAgent)) return 'TV'
+  if (/ipad|tablet|kindle|silk|playbook/.test(userAgent) || (/android/.test(userAgent) && !/mobile/.test(userAgent))) return 'Tablet'
+  if (/iphone|ipod/.test(userAgent)) return 'iOS'
+  if (/android/.test(userAgent)) return 'Android'
+  return 'Web'
+}
+
 async function auditStatement(request, env, {
   userId = null,
   eventType,
@@ -123,6 +137,9 @@ async function auditStatement(request, env, {
   metadata = {},
 }) {
   const clientIdentifierHash = await hashClientIdentifier(request, env)
+  const eventMetadata = eventType.startsWith('auth.')
+    ? { ...metadata, deviceType: getDeviceType(request) }
+    : metadata
   return env.DB.prepare(`
     INSERT INTO activity_logs (
       id, user_id, event_type, description, severity, metadata, client_identifier_hash
@@ -133,7 +150,7 @@ async function auditStatement(request, env, {
     eventType,
     description,
     severity,
-    JSON.stringify(metadata),
+    JSON.stringify(eventMetadata),
     clientIdentifierHash,
   )
 }
@@ -1848,7 +1865,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url)
     const origin = request.headers.get('origin')
-    const localWorker = ['localhost', '127.0.0.1'].includes(url.hostname)
+    const localWorker = isLocalHostname(url.hostname)
 
     if (origin && !localWorker && !isAllowedBrowserOrigin(origin, env)) {
       return json({ error: 'This site is not allowed to access the login service' }, 403, request, env)

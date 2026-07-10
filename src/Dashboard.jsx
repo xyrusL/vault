@@ -77,6 +77,17 @@ function Dashboard() {
     loadData();
   }, []);
 
+  async function refreshActivity() {
+    try {
+      const response = await apiFetch("/activity");
+      if (!response.ok) return;
+      const data = await response.json();
+      setActivity(data.data || []);
+    } catch {
+      setApiHealthy(false);
+    }
+  }
+
   async function removeAccount() {
     if (!accountToDelete) return;
     setDeletingAccount(true);
@@ -92,11 +103,7 @@ function Dashboard() {
       );
       setAccountToDelete(null);
 
-      const activityResponse = await apiFetch("/activity");
-      if (activityResponse.ok) {
-        const activityData = await activityResponse.json();
-        setActivity(activityData.data || []);
-      }
+      await refreshActivity();
     } finally {
       setDeletingAccount(false);
     }
@@ -124,14 +131,18 @@ function Dashboard() {
   }
 
   function handleAccountCreated(account) {
-    setAccounts((current) => [account, ...current]);
-    loadData();
+    setAccounts((current) => [
+      account,
+      ...current.filter((item) => item.id !== account.id),
+    ]);
+    refreshActivity();
   }
 
   function handleAccountUpdated(account) {
     setAccounts((current) =>
       current.map((item) => (item.id === account.id ? account : item)),
     );
+    refreshActivity();
   }
 
   const unreadActivity = activity.filter(

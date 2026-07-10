@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { Activity, ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
+import {
+  Activity,
+  ChevronLeft,
+  ChevronRight,
+  MonitorSmartphone,
+  ShieldAlert,
+} from "lucide-react";
 import { PageTitle } from "./DashboardUi";
 
 const pageSize = 10;
@@ -52,6 +58,12 @@ export default function ActivityView({ activity, loading }) {
                   <p className="mt-1 break-all font-mono text-[11px] text-slate-500">
                     {item.event_type}
                   </p>
+                  {item.metadata?.deviceType && (
+                    <p className="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
+                      <MonitorSmartphone className="size-3.5 text-cyan-300" />
+                      {item.metadata.deviceType} device
+                    </p>
+                  )}
                 </div>
               </article>
             );
