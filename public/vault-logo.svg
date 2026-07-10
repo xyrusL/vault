@@ -1,0 +1,13 @@
+<svg width="320" height="226" viewBox="0 0 320 226" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shield" x1="160" y1="18" x2="160" y2="137" gradientUnits="userSpaceOnUse"><stop stop-color="#34E5D6"/><stop offset="1" stop-color="#087C7B"/></linearGradient>
+    <linearGradient id="lock" x1="160" y1="62" x2="160" y2="113" gradientUnits="userSpaceOnUse"><stop stop-color="#31E3D3"/><stop offset="1" stop-color="#12A99F"/></linearGradient>
+    <filter id="glow" x="86" y="-4" width="148" height="166" filterUnits="userSpaceOnUse"><feGaussianBlur stdDeviation="8"/></filter>
+  </defs>
+  <path d="M160 18L212 39V76C212 104 193 127 160 141C127 127 108 104 108 76V39L160 18Z" stroke="#20CDBF" stroke-width="5" opacity=".22" filter="url(#glow)"/>
+  <path d="M160 18L212 39V76C212 104 193 127 160 141C127 127 108 104 108 76V39L160 18Z" fill="#07191C" fill-opacity=".72" stroke="url(#shield)" stroke-width="4.5" stroke-linejoin="round"/>
+  <path d="M143 78V70C143 60.6 150.6 53 160 53C169.4 53 177 60.6 177 70V78" stroke="#28DCCE" stroke-width="6" stroke-linecap="round"/>
+  <rect x="137" y="76" width="46" height="39" rx="5" fill="url(#lock)"/>
+  <circle cx="160" cy="93" r="4.5" fill="#031011"/><path d="M160 97V104" stroke="#031011" stroke-width="4" stroke-linecap="round"/>
+  <text x="87" y="202" fill="white" font-family="Inter,Arial,sans-serif" font-size="54" font-weight="700" letter-spacing="-3">Vault</text>
+</svg>

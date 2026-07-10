@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chatgpt-accounts-api",
+  "main": "worker/api.js",
+  "compatibility_date": "2026-07-10",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "api.vault.deze.me",
+      "custom_domain": true
+    }
+  ],
+  "vars": {
+    "ALLOWED_ORIGIN": "https://vault.deze.me,https://www.vault.deze.me"
+  },
+  "triggers": {
+    "crons": ["0 * * * *"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vault-db",
+      "database_id": "deddf748-bf00-423f-ba2c-a4ef0a62a7da",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

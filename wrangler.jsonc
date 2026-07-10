@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vault",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-07-10",
+  "routes": [{ "pattern": "vault.deze.me", "custom_domain": true }],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vault-db",
+      "database_id": "deddf748-bf00-423f-ba2c-a4ef0a62a7da",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
