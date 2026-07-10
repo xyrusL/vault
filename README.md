@@ -1,16 +1,27 @@
-# React + Vite
+# Vault
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Your private home for online accounts, passwords, and important login details.
 
-Currently, two official plugins are available:
+Vault keeps everything organized in one clean dashboard, so you spend less time hunting for credentials and more time getting things done.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## What It Does
 
-## React Compiler
+- Stores account details and encrypted passwords
+- Organizes logins by category, status, and platform
+- Supports password login and authenticator codes
+- Tracks important account activity
+- Imports and exports backups
+- Includes an AI assistant for account management
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Built With
 
-## Expanding the Oxlint configuration
+- React and Vite
+- Tailwind CSS
+- Cloudflare Workers
+- Cloudflare D1
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+## Security
+
+API tokens and encryption keys belong in Cloudflare secrets, never in source control.
+
+Vault is designed for personal use. Keep your deployment private, use a strong password, and enable two-factor authentication.
