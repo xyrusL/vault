@@ -4,14 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently --kill-others --names web,api \"vite\" \"npm:api:dev\"",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "worker:dev": "wrangler dev",
     "worker:deploy": "wrangler deploy",
-    "api:dev": "wrangler dev --config wrangler.api.jsonc --var ALLOW_DEVELOPMENT_ORIGINS:true",
+    "api:dev": "npm run db:migrations:local && wrangler dev --config wrangler.api.jsonc --var ALLOW_DEVELOPMENT_ORIGINS:true --var API_TOKEN:local-development-token --var CREDENTIALS_ENCRYPTION_KEY:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     "api:deploy": "wrangler deploy --config wrangler.api.jsonc",
+    "db:migrations:local": "wrangler d1 migrations apply vault-db --local --config wrangler.api.jsonc",
     "db:migrations": "wrangler d1 migrations apply vault-db --remote --config wrangler.api.jsonc"
   },
   "dependencies": {
@@ -27,6 +28,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "concurrently": "^10.0.3",
     "oxlint": "^1.71.0",
     "vite": "^8.1.1",
     "wrangler": "^4.110.0"
