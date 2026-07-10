@@ -391,10 +391,18 @@ export default function SettingsView({
       </div>
       {message && <p className="mt-4 text-sm text-cyan-300">{message}</p>}
       {setup && (
-        <Modal title="Set up two-factor authentication" onClose={closeSetup}>
-          <form onSubmit={confirmTwoFactor} className="mt-5 space-y-5">
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-300">
-              <p className="font-medium text-white">1. Add your account</p>
+        <Modal title="Set up two-factor authentication" onClose={closeSetup} size="wide">
+          <form
+            onSubmit={confirmTwoFactor}
+            className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.92fr)] lg:gap-5"
+          >
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-300 sm:p-5">
+              <div className="flex items-center gap-3">
+                <span className="grid size-7 shrink-0 place-items-center rounded-full bg-cyan-400/10 text-xs font-semibold text-cyan-300">
+                  1
+                </span>
+                <p className="font-medium text-white">Add your account</p>
+              </div>
               <p className="mt-1 text-slate-400">
                 Open Google Authenticator, Microsoft Authenticator, Authy, 1Password,
                 or any TOTP-compatible app. Choose to add an account, then scan this QR code.
@@ -416,46 +424,53 @@ export default function SettingsView({
                 {formatSecret(setup.secret)}
               </code>
             </div>
-            <div>
-              <p className="text-sm font-medium text-white">2. Verify the account</p>
-              <p className="mt-1 text-sm text-slate-400">
+            <div className="flex min-w-0 flex-col rounded-xl border border-white/10 bg-white/[0.03] p-4 sm:p-5">
+              <div className="flex items-center gap-3">
+                <span className="grid size-7 shrink-0 place-items-center rounded-full bg-cyan-400/10 text-xs font-semibold text-cyan-300">
+                  2
+                </span>
+                <p className="text-sm font-medium text-white">Verify the account</p>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-slate-400">
                 Enter the current 6-digit code from your authenticator app. Two-factor
                 authentication remains disabled until this code is confirmed.
               </p>
-            </div>
-            <Field
-              label="6-digit authenticator code"
-              name="setupCode"
-              value={setupCode}
-              onChange={updateNumericCode(setSetupCode)}
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              pattern="[0-9]{6}"
-              maxLength={6}
-              placeholder="000000"
-              required
-            />
-            {setupError && (
-              <p className="rounded-lg bg-red-400/10 px-4 py-3 text-sm text-red-300" role="alert">
-                {setupError}
-              </p>
-            )}
-            <div className="grid grid-cols-2 gap-3 sm:flex sm:justify-end">
-              <button
-                type="button"
-                onClick={closeSetup}
-                disabled={twoFactorBusy}
-                className="h-11 rounded-lg border border-white/10 px-4 text-sm text-slate-300 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={twoFactorBusy || setupCode.length !== 6}
-                className="h-11 rounded-lg bg-cyan-500 px-5 text-sm font-semibold text-[#021012] disabled:opacity-50"
-              >
-                {twoFactorBusy ? "Confirming..." : "Confirm and enable"}
-              </button>
+              <div className="mt-5">
+                <Field
+                  label="6-digit authenticator code"
+                  name="setupCode"
+                  value={setupCode}
+                  onChange={updateNumericCode(setSetupCode)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  placeholder="000000"
+                  required
+                />
+              </div>
+              {setupError && (
+                <p className="mt-4 rounded-lg bg-red-400/10 px-4 py-3 text-sm text-red-300" role="alert">
+                  {setupError}
+                </p>
+              )}
+              <div className="mt-6 grid grid-cols-2 gap-3 lg:mt-auto lg:pt-6">
+                <button
+                  type="button"
+                  onClick={closeSetup}
+                  disabled={twoFactorBusy}
+                  className="h-11 rounded-lg border border-white/10 px-4 text-sm text-slate-300 transition-colors hover:bg-white/5 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={twoFactorBusy || setupCode.length !== 6}
+                  className="h-11 rounded-lg bg-cyan-500 px-4 text-sm font-semibold text-[#021012] transition-colors hover:bg-cyan-400 disabled:opacity-50"
+                >
+                  {twoFactorBusy ? "Confirming..." : "Confirm and enable"}
+                </button>
+              </div>
             </div>
           </form>
         </Modal>

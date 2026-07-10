@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 
-export function Modal({ title, children, onClose }) {
+export function Modal({ title, children, onClose, size = "default" }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") onClose();
@@ -22,7 +22,7 @@ export function Modal({ title, children, onClose }) {
       onMouseDown={onClose}
     >
       <section
-        className="logout-modal max-h-[calc(100dvh-2rem)] w-full max-w-[560px] overflow-y-auto rounded-2xl border border-white/10 bg-[#081117] p-4 shadow-2xl sm:max-h-[calc(100dvh-4rem)] sm:p-6"
+        className={`logout-modal w-full rounded-2xl border border-white/10 bg-[#081117] p-4 shadow-2xl sm:p-6 ${size === "wide" ? "max-w-[900px]" : "max-w-[560px]"}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
