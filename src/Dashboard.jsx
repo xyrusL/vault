@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { apiFetch, clearDevelopmentToken } from "./api";
 import {
@@ -8,8 +8,10 @@ import {
 } from "./dashboard/AccountsViews";
 import ActivityView from "./dashboard/ActivityView";
 import BackupView from "./dashboard/BackupView";
+import ChatAiView from "./dashboard/ChatAiView";
 import { DashboardHeader, Sidebar } from "./dashboard/DashboardChrome";
 import { Modal } from "./dashboard/DashboardUi";
+import EmailGeneratorView from "./dashboard/EmailGeneratorView";
 import SettingsView from "./dashboard/SettingsView";
 
 const notificationStorageKey = "vault_notifications_read_at";
@@ -23,6 +25,7 @@ function Dashboard() {
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [accounts, setAccounts] = useState([]);
+  const [emailAddresses, setEmailAddresses] = useState([]);
   const [activity, setActivity] = useState([]);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -38,12 +41,19 @@ function Dashboard() {
     setLoading(true);
 
     try {
-      const [accountResponse, activityResponse, userResponse, healthResponse] =
+      const [
+        accountResponse,
+        activityResponse,
+        userResponse,
+        healthResponse,
+        emailResponse,
+      ] =
         await Promise.all([
           apiFetch("/accounts"),
           apiFetch("/activity"),
           apiFetch("/auth/me"),
           apiFetch("/health").catch(() => null),
+          apiFetch("/email/addresses").catch(() => null),
         ]);
 
       setApiHealthy(Boolean(healthResponse?.ok));
@@ -52,7 +62,8 @@ function Dashboard() {
         accountResponse,
         activityResponse,
         userResponse,
-      ];
+        emailResponse,
+      ].filter(Boolean);
       if (protectedResponses.some((response) => response.status === 401)) {
         window.location.replace("/");
         return;
@@ -66,6 +77,10 @@ function Dashboard() {
       setAccounts(accountData.data || []);
       setActivity(activityData.data || []);
       setUser(userData.data || null);
+      if (emailResponse?.ok) {
+        const emailData = await emailResponse.json();
+        setEmailAddresses(emailData.data || []);
+      }
     } catch {
       setApiHealthy(false);
     } finally {
@@ -124,10 +139,14 @@ function Dashboard() {
   }
 
   function openNotifications() {
+    markNotificationsRead();
+    setActivePage("activity");
+  }
+
+  function markNotificationsRead() {
     const now = new Date().toISOString();
     setNotificationsReadAt(now);
     localStorage.setItem(notificationStorageKey, now);
-    setActivePage("activity");
   }
 
   function handleAccountCreated(account) {
@@ -145,12 +164,17 @@ function Dashboard() {
     refreshActivity();
   }
 
+  const handleEmailAddressesChange = useCallback((addresses) => {
+    setEmailAddresses(addresses);
+  }, []);
+
   const unreadActivity = activity.filter(
     (item) =>
       !notificationsReadAt ||
       new Date(`${item.created_at}Z`) > new Date(notificationsReadAt),
   );
   const notificationLevel = getNotificationLevel(apiHealthy, unreadActivity);
+  const showHeader = activePage === "dashboard";
 
   function renderActivePage() {
     switch (activePage) {
@@ -164,8 +188,23 @@ function Dashboard() {
             onAccountUpdated={handleAccountUpdated}
           />
         );
+      case "email-generator":
+        return (
+          <EmailGeneratorView
+            onAddressesChange={handleEmailAddressesChange}
+          />
+        );
+      case "chat-ai":
+        return <ChatAiView />;
       case "activity":
-        return <ActivityView activity={activity} loading={loading} />;
+        return (
+          <ActivityView
+            activity={activity}
+            loading={loading}
+            notificationsReadAt={notificationsReadAt}
+            onMarkAllRead={markNotificationsRead}
+          />
+        );
       case "backup":
         return <BackupView accounts={accounts} />;
       case "settings":
@@ -184,6 +223,7 @@ function Dashboard() {
             activity={activity}
             apiHealthy={apiHealthy}
             user={user}
+            emailAddresses={emailAddresses}
           />
         );
     }
@@ -201,15 +241,17 @@ function Dashboard() {
         onLogout={() => setLogoutOpen(true)}
       />
       <div className="lg:pl-[256px]">
-        <DashboardHeader
-          user={user}
-          notificationLevel={notificationLevel}
-          onMenuOpen={() => setMenuOpen(true)}
-          onNotifications={openNotifications}
-          onNavigate={setActivePage}
-          onLogout={() => setLogoutOpen(true)}
-        />
-        <div className="mx-auto max-w-[1360px] px-4 py-7 sm:px-7 lg:py-9">
+        {showHeader && (
+          <DashboardHeader
+            user={user}
+            notificationLevel={notificationLevel}
+            onMenuOpen={() => setMenuOpen(true)}
+            onNotifications={openNotifications}
+            onNavigate={setActivePage}
+            onLogout={() => setLogoutOpen(true)}
+          />
+        )}
+        <div className="dashboard-content mx-auto max-w-[1360px] px-4 py-3 sm:px-7">
           {renderActivePage()}
         </div>
       </div>

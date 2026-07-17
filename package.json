@@ -4,14 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently --kill-others --names web,api \"vite\" \"npm:api:dev\"",
+    "dev": "npm run dev:remote",
+    "dev:remote": "vite",
+    "dev:local": "concurrently --kill-others --names web,api \"vite --mode local-dev\" \"npm:api:dev\"",
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
     "worker:dev": "wrangler dev",
     "worker:deploy": "wrangler deploy",
-    "api:dev": "npm run db:migrations:local && wrangler dev --config wrangler.api.jsonc --var ALLOW_DEVELOPMENT_ORIGINS:true --var API_TOKEN:local-development-token --var CREDENTIALS_ENCRYPTION_KEY:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "api:dev": "npm run db:migrations:local && wrangler dev --config wrangler.api.jsonc --env-file .env --port 8788 --var ALLOW_DEVELOPMENT_ORIGINS:true --var API_TOKEN:local-development-token --var CREDENTIALS_ENCRYPTION_KEY:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= --var EMAIL_DOMAINS:tpmail.deze.me,octagram.qzz.io --var EMAIL_ROUTING_ZONES:tpmail.deze.me=60be8001944d6c2354d8ccedc81bf06a,octagram.qzz.io=a8972358f3510337c411f40e7030b1fb --var EMAIL_ROUTING_WORKER:vault-email-worker --var CLOUDFLARE_ACCOUNT_ID:4002cabf9107796667c42a5eed175298",
     "api:deploy": "wrangler deploy --config wrangler.api.jsonc",
+    "email:dev": "wrangler dev --config wrangler.email.jsonc --local",
+    "email:deploy": "wrangler deploy --config wrangler.email.jsonc",
     "db:migrations:local": "wrangler d1 migrations apply vault-db --local --config wrangler.api.jsonc",
     "db:migrations": "wrangler d1 migrations apply vault-db --remote --config wrangler.api.jsonc"
   },
@@ -19,9 +23,11 @@
     "@tailwindcss/vite": "^4.3.2",
     "lucide-react": "^1.24.0",
     "otpauth": "^9.5.1",
+    "postal-mime": "^2.7.5",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "react-markdown": "^10.1.0",
     "tailwindcss": "^4.3.2"
   },
   "devDependencies": {

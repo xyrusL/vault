@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 
-export function Modal({ title, children, onClose, size = "default" }) {
+export function Modal({ title, children, onClose, size = "default", header }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") onClose();
@@ -22,23 +22,25 @@ export function Modal({ title, children, onClose, size = "default" }) {
       onMouseDown={onClose}
     >
       <section
-        className={`logout-modal w-full rounded-2xl border border-white/10 bg-[#081117] p-4 shadow-2xl sm:p-6 ${size === "wide" ? "max-w-[900px]" : "max-w-[560px]"}`}
+        className={`logout-modal w-full rounded-2xl border border-white/10 bg-[#081117] p-4 shadow-2xl sm:p-6 ${size === "wide" ? "max-w-[900px]" : size === "account" ? "max-h-[90dvh] max-w-[680px] overflow-y-auto sm:p-5" : size === "endpoint" ? "max-h-[calc(100dvh-2rem)] max-w-[620px] overflow-y-auto bg-gradient-to-br from-[#091721] to-[#061018] sm:p-4" : "max-w-[560px]"}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-4">
-          <h2 className="text-lg font-semibold sm:text-xl">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid size-11 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/5"
-            aria-label="Close dialog"
-          >
-            <X className="size-5" />
-          </button>
-        </div>
+        {header || (
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-lg font-semibold sm:text-xl">{title}</h2>
+            <button
+              type="button"
+              onClick={onClose}
+              className="grid size-11 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/5"
+              aria-label="Close dialog"
+            >
+              <X className="size-5" />
+            </button>
+          </div>
+        )}
         {children}
       </section>
     </div>
@@ -63,15 +65,22 @@ export function SelectField({
   onChange,
   disabled = false,
   getOptionIcon,
+  leadingIcon,
+  ariaLabel,
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const selectRef = useRef(null);
   const searchRef = useRef(null);
-  const filteredOptions = options.filter((option) =>
-    option.toLowerCase().includes(query.trim().toLowerCase()),
+  const [dropdownDirection, setDropdownDirection] = useState("down");
+  const normalizedOptions = options.map((option) => typeof option === "string"
+    ? { value: option, label: option }
+    : option);
+  const filteredOptions = normalizedOptions.filter((option) =>
+    `${option.label} ${option.value}`.toLowerCase().includes(query.trim().toLowerCase()),
   );
-  const selectedIcon = getOptionIcon?.(value);
+  const selectedOption = normalizedOptions.find((option) => option.value === value);
+  const selectedIcon = getOptionIcon?.(value, selectedOption);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -100,14 +109,23 @@ export function SelectField({
     requestAnimationFrame(() => searchRef.current?.focus());
   }, [open]);
 
+  useLayoutEffect(() => {
+    if (!open) return;
+    const bounds = selectRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const spaceBelow = window.innerHeight - bounds.bottom;
+    const spaceAbove = bounds.top;
+    setDropdownDirection(spaceBelow < 300 && spaceAbove > spaceBelow ? "up" : "down");
+  }, [open]);
+
   function choose(option) {
-    onChange?.({ target: { name, value: option } });
+    onChange?.({ target: { name, value: option.value } });
     setOpen(false);
   }
 
   return (
     <div ref={selectRef} className="block min-w-0">
-      <span className="mb-2 block text-xs text-slate-400">{label}</span>
+      {label && <span className="mb-2 block text-xs text-slate-400">{label}</span>}
       <div className="relative">
         <button
           type="button"
@@ -116,38 +134,42 @@ export function SelectField({
           className={`form-control flex items-center justify-between gap-3 text-left disabled:cursor-not-allowed disabled:opacity-50 ${className}`.trim()}
           aria-expanded={open}
           aria-haspopup="listbox"
+          aria-label={ariaLabel || label}
         >
           <span className="flex min-w-0 items-center gap-2.5">
+            {leadingIcon}
             {selectedIcon && <img src={selectedIcon} alt="" className="size-5 shrink-0 rounded object-contain" />}
-            <span className="truncate">{value}</span>
+            <span className="truncate">{selectedOption?.label || value}</span>
           </span>
           <ChevronDown className={`size-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180 text-cyan-300" : ""}`} />
         </button>
         {open && (
-          <div className="absolute inset-x-0 top-[calc(100%+0.35rem)] z-50 max-h-56 overflow-y-auto overscroll-contain rounded-lg border border-white/15 bg-[#071016] p-1 shadow-2xl shadow-black/60" role="listbox">
+          <div className={`absolute inset-x-0 z-50 flex max-h-[min(22rem,calc(100dvh-2rem))] flex-col overflow-hidden rounded-lg border border-white/15 bg-[#071016] p-1 shadow-2xl shadow-black/60 ${dropdownDirection === "up" ? "bottom-[calc(100%+0.35rem)]" : "top-[calc(100%+0.35rem)]"}`} role="listbox">
             {options.length > 5 && (
               <label className="sticky top-0 z-10 mb-1 flex items-center gap-2 rounded-md border border-white/10 bg-[#0a151c] px-3">
                 <Search className="size-4 shrink-0 text-slate-500" />
                 <input ref={searchRef} type="search" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => event.stopPropagation()} placeholder="Type to filter..." className="h-10 min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500" />
               </label>
             )}
+            <div className="min-h-0 overflow-y-auto overscroll-contain">
             {filteredOptions.map((option) => (
               <button
-                key={option}
+                key={option.value}
                 type="button"
                 role="option"
-                aria-selected={option === value}
+                aria-selected={option.value === value}
                 onClick={() => choose(option)}
-                className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2.5 text-left text-sm transition ${option === value ? "bg-cyan-300/10 text-cyan-200" : "text-slate-300 hover:bg-white/[0.06] hover:text-white"}`}
+                className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2.5 text-left text-sm transition ${option.value === value ? "bg-cyan-300/10 text-cyan-200" : "text-slate-300 hover:bg-white/[0.06] hover:text-white"}`}
               >
                 <span className="flex min-w-0 items-center gap-2.5">
-                  {getOptionIcon?.(option) && <img src={getOptionIcon(option)} alt="" loading="lazy" className="size-5 shrink-0 rounded object-contain" />}
-                  <span className="truncate">{option}</span>
+                  {getOptionIcon?.(option.value, option) && <img src={getOptionIcon(option.value, option)} alt="" loading="lazy" className="size-5 shrink-0 rounded object-contain" />}
+                  <span className="truncate">{option.label}</span>
                 </span>
-                {option === value && <Check className="size-4 shrink-0" />}
-              </button>
-            ))}
-            {!filteredOptions.length && <p className="px-3 py-5 text-center text-xs text-slate-500">No matching options</p>}
+                {option.value === value && <Check className="size-4 shrink-0" />}
+                </button>
+              ))}
+              {!filteredOptions.length && <p className="px-3 py-5 text-center text-xs text-slate-500">No matching options</p>}
+            </div>
           </div>
         )}
       </div>
@@ -158,12 +180,14 @@ export function SelectField({
 
 export function PageTitle({ eyebrow, title, text, action }) {
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
+        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
           {eyebrow}
         </p>
-        <h1 className="mt-2 text-2xl font-semibold sm:text-3xl">{title}</h1>
+        <h1 className="mt-1.5 text-xl font-semibold leading-tight sm:text-2xl">
+          {title}
+        </h1>
         <p className="mt-2 text-sm text-slate-400">{text}</p>
       </div>
       {action}

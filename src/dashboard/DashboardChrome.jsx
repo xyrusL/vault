@@ -6,7 +6,9 @@ import {
   CloudDownload,
   LayoutDashboard,
   LogOut,
+  Mail,
   Menu,
+  MessageSquareText,
   Settings,
   ShieldCheck,
   Users,
@@ -16,6 +18,8 @@ import {
 const navigationItems = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "accounts", label: "Accounts", icon: Users },
+  { id: "email-generator", label: "Email Generator", icon: Mail },
+  { id: "chat-ai", label: "AI Chat", icon: MessageSquareText },
   { id: "activity", label: "Activity Log", icon: CircleGauge },
   { id: "backup", label: "Backup", icon: CloudDownload },
   { id: "settings", label: "Settings", icon: Settings },

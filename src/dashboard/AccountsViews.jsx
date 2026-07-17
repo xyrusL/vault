@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   Bot,
+  Bookmark,
   Briefcase,
   CalendarClock,
   Check,
@@ -10,11 +11,17 @@ import {
   ChevronRight,
   CheckCircle2,
   Copy,
+  Clock3,
+  Database,
+  FileText,
+  Folder,
   Gem,
   Globe2,
+  Inbox,
   Eye,
   EyeOff,
   KeyRound,
+  Layers3,
   Mail,
   LoaderCircle,
   Pencil,
@@ -142,7 +149,13 @@ const accountIcons = [
   Sparkles,
 ];
 
-export function DashboardOverview({ accounts, activity, apiHealthy, user }) {
+export function DashboardOverview({
+  accounts,
+  activity,
+  apiHealthy,
+  user,
+  emailAddresses,
+}) {
   return (
     <section>
       <PageTitle
@@ -152,6 +165,15 @@ export function DashboardOverview({ accounts, activity, apiHealthy, user }) {
       />
       <div className="mt-7">
         <Metrics accounts={accounts} />
+      </div>
+      <div className="mt-8">
+        <div className="mb-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
+            Email overview
+          </p>
+          <h2 className="mt-2 text-lg font-semibold">Generated email activity</h2>
+        </div>
+        <EmailMetrics addresses={emailAddresses} />
       </div>
       <div className="panel mt-5">
         <h2 className="text-lg font-semibold">Vault status</h2>
@@ -494,7 +516,7 @@ function DuplicateAccountNotice({ details }) {
             <div>
               <dt className="text-slate-500">Existing record</dt>
               <dd className="mt-0.5 text-slate-300">
-                {account.label} · {account.plan} · {account.status}
+                {account.label} · {account.plan} · {getEffectiveStatus(account)}
               </dd>
             </div>
             <div>
@@ -609,6 +631,34 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
     <Modal
       title={editing ? "Edit secured account" : "Account details"}
       onClose={onClose}
+      size="wide"
+      header={(
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-11 shrink-0 place-items-center rounded-full border border-cyan-300/10 bg-cyan-300/[0.07] text-cyan-300 shadow-[0_0_24px_rgba(34,211,238,0.08)]">
+              {editing ? <ShieldCheck className="size-5" /> : <Mail className="size-5" />}
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold text-white sm:text-xl">
+                {editing ? "Edit secured account" : "Account details"}
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-400 sm:text-sm">
+                {editing
+                  ? "Update the details for this account or service."
+                  : "View and manage account information"}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid size-9 shrink-0 place-items-center rounded-lg border border-white/[0.06] text-slate-400 transition hover:bg-white/5 hover:text-white"
+            aria-label={editing ? "Close account editor" : "Close account details"}
+          >
+            <X className="size-5" />
+          </button>
+        </div>
+      )}
     >
       {loading && (
         <div className="grid min-h-56 place-items-center text-slate-400">
@@ -626,10 +676,11 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
           showPassword={showPassword}
           onPasswordVisibility={() => setShowPassword((visible) => !visible)}
           onEdit={startEditing}
+          onClose={onClose}
         />
       )}
       {!loading && details && editing && (
-        <form onSubmit={save} className="mt-6 grid gap-4 sm:grid-cols-2">
+        <form onSubmit={save} className="mt-5 grid gap-x-5 gap-y-3 sm:grid-cols-2">
           <Field
             label="Platform / service"
             name="platform"
@@ -696,15 +747,13 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
             onChange={updateField}
             options={accountPlans}
           />
-          <div className="sm:col-span-2">
-            <SelectField
-              label="Status"
-              name="status"
-              value={form.status}
-              onChange={updateField}
-              options={["Active", "Inactive"]}
-            />
-          </div>
+          <SelectField
+            label="Status"
+            name="status"
+            value={form.status}
+            onChange={updateField}
+            options={["Active", "Inactive"]}
+          />
           <label className="sm:col-span-2">
             <span className="mb-2 block text-xs text-slate-400">Notes</span>
             <textarea
@@ -748,34 +797,37 @@ function AccountDetails({
   showPassword,
   onPasswordVisibility,
   onEdit,
+  onClose,
 }) {
+  const status = getEffectiveStatus(details);
+
   return (
-    <div className="mt-5">
+    <div className="mt-3">
       <div className="flex justify-end">
         <button
           type="button"
           onClick={onEdit}
-          className="flex h-10 items-center gap-2 rounded-lg border border-cyan-300/30 px-4 text-sm text-cyan-300"
+          className="flex h-9 items-center gap-2 rounded-lg border border-cyan-300/35 px-3 text-xs font-medium text-cyan-300 transition hover:bg-cyan-300/[0.06]"
         >
           <Pencil className="size-4" />
           Edit account
         </button>
       </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+      <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {details.email && (
-          <DetailItem label="Email" className="sm:col-span-2">
+          <PrimaryDetail label="Email" className="sm:col-span-2 lg:col-span-2">
             <span className="break-all">{details.email}</span>
             <CopyButton value={details.email} label="Copy email" />
-          </DetailItem>
+          </PrimaryDetail>
         )}
         {details.username && (
-          <DetailItem label="Username" className="sm:col-span-2">
+          <PrimaryDetail label="Username">
             <span className="break-all">{details.username}</span>
             <CopyButton value={details.username} label="Copy username" />
-          </DetailItem>
+          </PrimaryDetail>
         )}
         {details.login_url && (
-          <DetailItem label="Login URL" className="sm:col-span-2">
+          <PrimaryDetail label="Login URL" className="sm:col-span-2 lg:col-span-2">
             <a
               href={details.login_url}
               target="_blank"
@@ -785,10 +837,10 @@ function AccountDetails({
               {details.login_url}
             </a>
             <CopyButton value={details.login_url} label="Copy login URL" />
-          </DetailItem>
+          </PrimaryDetail>
         )}
         {details.password && (
-          <DetailItem label="Password" className="sm:col-span-2">
+          <PrimaryDetail label="Password">
             <span className="min-w-0 flex-1 break-all font-mono">
               {showPassword ? details.password : "••••••••••••"}
             </span>
@@ -805,45 +857,65 @@ function AccountDetails({
               )}
             </button>
             <CopyButton value={details.password} label="Copy password" />
-          </DetailItem>
+          </PrimaryDetail>
         )}
-        <DetailItem label="Account label">{details.label}</DetailItem>
-        <DetailItem label="Platform">{details.platform || "Custom"}</DetailItem>
-        <DetailItem label="Category">{details.category}</DetailItem>
-        <DetailItem label="Plan">{details.plan}</DetailItem>
-        <DetailItem label="Status">
-          <span className={getStatusTone(details.status)}>
-            {details.status}
+        <DetailItem label="Account label" icon={Bot}>{details.label}</DetailItem>
+        <DetailItem label="Platform" icon={Layers3}>{details.platform || "Custom"}</DetailItem>
+        <DetailItem label="Category" icon={Folder}>{details.category}</DetailItem>
+        <DetailItem label="Plan" icon={Bookmark}>{details.plan}</DetailItem>
+        <DetailItem label="Status" icon={ShieldCheck}>
+          <span className={`flex items-center gap-2 ${getStatusTone(status)}`}>
+            {status}
+            <i className={`size-2 rounded-full ${getStatusDotTone(status)}`} />
           </span>
         </DetailItem>
-        <DetailItem label="Expiration">
+        <DetailItem label="Expiration" icon={CalendarClock}>
           {formatExpiry(details, true)}
         </DetailItem>
-        <DetailItem label="Added">
+        <DetailItem label="Added" icon={Clock3}>
           {formatTimestamp(details.created_at)}
         </DetailItem>
         {details.notes && (
-          <DetailItem label="Notes" className="sm:col-span-2">
+          <DetailItem
+            label="Notes"
+            icon={FileText}
+            className="sm:col-span-2 lg:col-span-3"
+          >
             <span className="whitespace-pre-wrap break-words">
               {details.notes}
             </span>
           </DetailItem>
         )}
       </div>
+      <div className="mt-4 flex justify-center">
+        <button type="button" onClick={onClose} className="h-9 rounded-lg border border-white/10 bg-white/[0.04] px-5 text-xs text-slate-300 transition hover:bg-white/[0.07] hover:text-white">Close</button>
+      </div>
     </div>
   );
 }
 
-function DetailItem({ label, children, className = "" }) {
+function PrimaryDetail({ label, children, className = "" }) {
   return (
-    <div
-      className={`rounded-xl border border-white/8 bg-white/[0.02] p-3 ${className}`}
-    >
+    <div className={`rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] px-3.5 py-2.5 ${className}`}>
       <p className="text-[11px] uppercase tracking-wider text-slate-500">
         {label}
       </p>
-      <div className="mt-2 flex min-w-0 items-center justify-between gap-2 text-sm text-slate-200">
+      <div className="mt-1.5 flex min-w-0 items-center justify-between gap-3 text-sm font-medium text-slate-100">
         {children}
+      </div>
+    </div>
+  );
+}
+
+function DetailItem({ label, children, icon: Icon, className = "" }) {
+  return (
+    <div className={`flex min-h-[62px] items-center gap-3 rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] p-3 ${className}`}>
+      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-cyan-300/[0.06] text-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.06)]">
+        <Icon className="size-4" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-[11px] uppercase tracking-wider text-slate-500">{label}</p>
+        <div className="mt-1 break-words text-sm font-medium text-slate-200">{children}</div>
       </div>
     </div>
   );
@@ -907,16 +979,19 @@ function Metrics({ accounts }) {
     },
     {
       label: "Active Accounts",
-      value: accounts.filter((account) => account.status === "Active").length,
+      value: accounts.filter(
+        (account) => getEffectiveStatus(account) === "Active",
+      ).length,
       detail: "Available right now",
       icon: ShieldCheck,
       tone: "green",
     },
     {
       label: "Expiring Soon",
-      value: accounts.filter((account) => account.status === "Expiring Soon")
-        .length,
-      detail: "Within the next 30 days",
+      value: accounts.filter(
+        (account) => getEffectiveStatus(account) === "Expiring Soon",
+      ).length,
+      detail: "Within the next 5 days",
       icon: CalendarClock,
       tone: "orange",
     },
@@ -945,6 +1020,84 @@ function Metrics({ accounts }) {
       ))}
     </section>
   );
+}
+
+function EmailMetrics({ addresses }) {
+  const totalMessages = addresses.reduce(
+    (sum, address) => sum + Number(address.messageCount || 0),
+    0,
+  );
+  const unreadMessages = addresses.reduce(
+    (sum, address) => sum + Number(address.unreadCount || 0),
+    0,
+  );
+  const storageBytes = addresses.reduce(
+    (sum, address) => sum + Number(address.storageBytes || 0),
+    0,
+  );
+  const metrics = [
+    {
+      label: "Generated Emails",
+      value: addresses.length,
+      detail: "Private addresses created",
+      icon: Mail,
+      tone: "cyan",
+    },
+    {
+      label: "Received Messages",
+      value: totalMessages,
+      detail: "Across all generated emails",
+      icon: Inbox,
+      tone: "violet",
+    },
+    {
+      label: "Unread Messages",
+      value: unreadMessages,
+      detail: unreadMessages ? "Waiting in your inbox" : "All caught up",
+      icon: Activity,
+      tone: "green",
+    },
+    {
+      label: "Email Storage",
+      value: formatBytes(storageBytes),
+      detail: "Message storage currently used",
+      icon: Database,
+      tone: "orange",
+    },
+  ];
+
+  return (
+    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {metrics.map(({ label, value, detail, icon: Icon, tone }) => (
+        <article
+          key={label}
+          className="metric-card rounded-xl border border-white/10 bg-white/[0.025] p-5"
+        >
+          <div className="flex justify-between gap-4">
+            <div>
+              <p className="text-xs text-slate-400">{label}</p>
+              <strong className="mt-2 block text-2xl">{value}</strong>
+            </div>
+            <span
+              className={`grid size-10 shrink-0 place-items-center rounded-xl ${metricToneStyles[tone]}`}
+            >
+              <Icon className="size-5" />
+            </span>
+          </div>
+          <p className="mt-6 text-xs text-slate-500">{detail}</p>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function formatBytes(value) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) {
+    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function AccountActions({ account, onDelete, onView }) {
@@ -1052,9 +1205,9 @@ function AccountsTable({ accounts, loading, onDelete, onView, emptyMessage }) {
                     </div>
                   </div>
                   <span
-                    className={`shrink-0 text-xs ${getStatusTone(account.status)}`}
+                    className={`shrink-0 text-xs ${getStatusTone(getEffectiveStatus(account))}`}
                   >
-                    {account.status}
+                    {getEffectiveStatus(account)}
                   </span>
                 </div>
                 <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
@@ -1127,8 +1280,8 @@ function AccountsTable({ accounts, loading, onDelete, onView, emptyMessage }) {
                   </span>
                 </td>
                 <td className="px-5">
-                  <span className={`text-xs ${getStatusTone(account.status)}`}>
-                    {account.status}
+                  <span className={`text-xs ${getStatusTone(getEffectiveStatus(account))}`}>
+                    {getEffectiveStatus(account)}
                   </span>
                 </td>
                 <td className="px-5 text-xs text-slate-400">
@@ -1279,6 +1432,31 @@ function getStatusTone(status) {
   if (status === "Expiring Soon") return "text-amber-300";
   if (status === "Inactive") return "text-slate-400";
   return "text-emerald-300";
+}
+
+function getStatusDotTone(status) {
+  if (status === "Expired") return "bg-red-300 shadow-[0_0_8px_rgba(252,165,165,0.65)]";
+  if (status === "Expiring Soon") return "bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.65)]";
+  if (status === "Inactive") return "bg-slate-400";
+  return "bg-emerald-300 shadow-[0_0_8px_rgba(110,231,183,0.65)]";
+}
+
+function getEffectiveStatus(account) {
+  if (account.status === "Inactive") return "Inactive";
+  if (!account.expires_at) return "Active";
+
+  const expiryDate = new Date(`${account.expires_at.slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(expiryDate.getTime())) return account.status || "Active";
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysUntilExpiry = Math.round(
+    (expiryDate.getTime() - today.getTime()) / (24 * 60 * 60 * 1000),
+  );
+
+  if (daysUntilExpiry < 0) return "Expired";
+  if (daysUntilExpiry <= 5) return "Expiring Soon";
+  return "Active";
 }
 
 function getAccountIdentity(account) {

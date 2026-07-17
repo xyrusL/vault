@@ -20,6 +20,8 @@ Vault keeps everything organized in one clean dashboard, so you spend less time 
 - Cloudflare Workers
 - Cloudflare D1
 
+See [Vault Architecture](docs/architecture.md) for the system diagram and request flows.
+
 ## Security
 
 API tokens and encryption keys belong in Cloudflare secrets, never in source control.

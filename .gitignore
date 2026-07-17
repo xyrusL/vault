@@ -11,8 +11,19 @@ node_modules
 dist
 dist-ssr
 *.local
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
 .wrangler
 .worktrees/
+
+# Local AI and browser tooling
+.agents/
+.claude/
+.kilo/
+.playwright-mcp/
 
 # Editor directories and files
 .vscode/*

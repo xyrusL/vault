@@ -17,6 +17,28 @@ const upstreamTimeoutMilliseconds = 30 * 1000
 const supportedApiModes = new Set(['openai-compatible', 'openai-responses', 'anthropic-messages'])
 const twoFactorChallengeLifetimeMilliseconds = 5 * 60 * 1000
 const maximumTwoFactorAttempts = 5
+const maximumAddressesPerUser = 50
+const maximumAddressBatchSize = 10
+const maximumCollisionRetries = 5
+const maximumLocalPartLength = 64
+const maximumEmailBodyDisplay = 64 * 1024
+
+// Curated readable word list for random address generation
+const emailWordList = [
+  'amber', 'aqua', 'aspen', 'birch', 'blaze', 'bloom', 'bolt', 'breeze',
+  'brook', 'canyon', 'cedar', 'chill', 'cliff', 'cloud', 'coast', 'coral',
+  'crane', 'creek', 'crest', 'crisp', 'dune', 'dawn', 'drift', 'ember',
+  'fable', 'fern', 'field', 'flame', 'flint', 'flora', 'forge', 'frost',
+  'glade', 'gleam', 'globe', 'grain', 'grove', 'haven', 'hawk', 'hazel',
+  'heath', 'heron', 'hive', 'ivory', 'jade', 'lake', 'lark', 'leaf',
+  'light', 'lilac', 'linen', 'lotus', 'lunar', 'maple', 'marsh', 'mesa',
+  'mist', 'moss', 'nova', 'oasis', 'onyx', 'orbit', 'otter', 'palm',
+  'pearl', 'petal', 'pine', 'plum', 'pond', 'prism', 'quail', 'quartz',
+  'rain', 'rapid', 'raven', 'reed', 'ridge', 'river', 'robin', 'sage',
+  'shore', 'silk', 'slate', 'snow', 'solar', 'spark', 'spire', 'stone',
+  'storm', 'swift', 'thorn', 'tide', 'tiger', 'trail', 'tulip', 'vale',
+  'vine', 'wave', 'wren', 'zephyr',
+]
 
 class ClientError extends Error {
   constructor(message, status = 400) {
@@ -1052,7 +1074,7 @@ async function syncAccountStatuses(env) {
         AND status <> 'Expiring Soon'
         AND expires_at IS NOT NULL
         AND datetime(expires_at) > CURRENT_TIMESTAMP
-        AND datetime(expires_at) <= datetime('now', '+30 days')
+        AND date(expires_at) <= date('now', '+5 days')
     `),
     env.DB.prepare(`
       UPDATE accounts
@@ -1060,7 +1082,7 @@ async function syncAccountStatuses(env) {
       WHERE status IN ('Expired', 'Expiring Soon')
         AND (
           expires_at IS NULL
-          OR datetime(expires_at) > datetime('now', '+30 days')
+          OR date(expires_at) > date('now', '+5 days')
         )
     `),
   ])
@@ -1513,6 +1535,28 @@ async function getAiConfig(request, env, user) {
   return json({ data: presentAiConnection(connection) }, 200, request, env)
 }
 
+async function getAiClientConfig(request, env, user) {
+  const connection = await env.DB.prepare(`
+    SELECT provider_id, provider_name, api_mode, base_url, api_key_ciphertext, api_key_iv,
+      model, status, last_verified_at, created_at, updated_at
+    FROM ai_connections WHERE user_id = ?
+  `).bind(user.id).first()
+  if (!connection) return json({ data: null }, 200, request, env)
+
+  let apiKey
+  try {
+    apiKey = await decryptCredential(
+      connection.api_key_ciphertext,
+      connection.api_key_iv,
+      env.CREDENTIALS_ENCRYPTION_KEY,
+    )
+  } catch {
+    throw new ClientError('AI provider credentials are unavailable', 503)
+  }
+
+  return json({ data: { ...presentAiConnection(connection), apiKey } }, 200, request, env)
+}
+
 async function verifyAiConnection(request, env) {
   const body = await readJson(request)
   const baseUrl = normalizeProviderBaseUrl(body.baseUrl)
@@ -1549,17 +1593,8 @@ async function updateAiConfig(request, env, user) {
   const model = cleanText(body.model, 'Model', 200)
   if (!model) throw new ClientError('Model is required')
 
-  let discovery
-  try {
-    discovery = await discoverProviderModels(apiMode, baseUrl, apiKey)
-    if (discovery.modelListAvailable && !discovery.models.includes(model)) {
-      throw new ClientError('Selected model was not returned by the AI provider')
-    }
-  } finally {
-    body.apiKey = null
-  }
-
   const encrypted = await encryptPassword(apiKey, env.CREDENTIALS_ENCRYPTION_KEY)
+  body.apiKey = null
   const audit = await auditStatement(request, env, {
     userId: user.id,
     eventType: 'ai.config.updated',
@@ -1657,6 +1692,72 @@ async function listConversationMessages(request, env, user, id) {
     ORDER BY created_at ASC, id ASC
   `).bind(id).all()
   return json({ data: results.map(presentMessage), count: results.length }, 200, request, env)
+}
+
+async function saveChatExchange(request, env, user) {
+  const body = await readJson(request, maximumChatBodyBytes)
+  const message = cleanText(body.message, 'Message', 20000)
+  const assistantContent = cleanText(body.assistantContent, 'Assistant response', 50000)
+  if (!message) throw new ClientError('Message is required')
+  if (!assistantContent) throw new ClientError('Assistant response is required')
+
+  let conversation = null
+  if (body.conversationId !== undefined && body.conversationId !== null) {
+    if (typeof body.conversationId !== 'string'
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.conversationId)) {
+      throw new ClientError('Conversation ID is invalid')
+    }
+    conversation = await env.DB.prepare(`
+      SELECT id, title, created_at, updated_at
+      FROM chat_conversations WHERE id = ? AND user_id = ?
+    `).bind(body.conversationId, user.id).first()
+    if (!conversation) return json({ error: 'Conversation not found' }, 404, request, env)
+  }
+
+  const conversationId = conversation?.id || crypto.randomUUID()
+  const userMessageId = crypto.randomUUID()
+  const assistantMessageId = crypto.randomUUID()
+  const statements = []
+  if (!conversation) {
+    statements.push(env.DB.prepare(`
+      INSERT INTO chat_conversations (id, user_id, title) VALUES (?, ?, ?)
+    `).bind(conversationId, user.id, message.slice(0, 100)))
+  } else {
+    statements.push(env.DB.prepare(`
+      UPDATE chat_conversations SET updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).bind(conversationId, user.id))
+  }
+  statements.push(
+    env.DB.prepare(`
+      INSERT INTO chat_messages (id, conversation_id, role, content, created_at)
+      VALUES (?, ?, 'user', ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
+    `).bind(userMessageId, conversationId, message),
+    env.DB.prepare(`
+      INSERT INTO chat_messages (id, conversation_id, role, content, created_at)
+      VALUES (?, ?, 'assistant', ?, strftime('%Y-%m-%d %H:%M:%f', 'now', '+0.001 seconds'))
+    `).bind(assistantMessageId, conversationId, assistantContent),
+  )
+  await env.DB.batch(statements)
+
+  const [savedConversation, userMessage, assistantMessage] = await Promise.all([
+    env.DB.prepare(`
+      SELECT id, title, created_at, updated_at FROM chat_conversations WHERE id = ?
+    `).bind(conversationId).first(),
+    env.DB.prepare(`
+      SELECT id, conversation_id, role, content, created_at FROM chat_messages WHERE id = ?
+    `).bind(userMessageId).first(),
+    env.DB.prepare(`
+      SELECT id, conversation_id, role, content, created_at FROM chat_messages WHERE id = ?
+    `).bind(assistantMessageId).first(),
+  ])
+  return json({
+    data: {
+      conversation: presentConversation(savedConversation),
+      user: presentMessage(userMessage),
+      assistant: presentMessage(assistantMessage),
+    },
+  }, 201, request, env)
 }
 
 async function createChatCompletion(request, env, user) {
@@ -1857,6 +1958,653 @@ async function exportBackup(request, env, url) {
   })
 }
 
+// --- Email helpers ---
+
+function parseConfiguredEmailDomains(env) {
+  return String(env.EMAIL_DOMAINS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+}
+
+function parseEmailRoutingZones(env) {
+  return new Map(String(env.EMAIL_ROUTING_ZONES || '')
+    .split(',')
+    .map((entry) => entry.trim().split('=').map((value) => value.trim()))
+    .filter(([hostname, zoneId]) => hostname && zoneId)
+    .map(([hostname, zoneId]) => [hostname.toLowerCase(), zoneId]))
+}
+
+function normalizeForwardingAddress(value) {
+  const address = String(value || '').trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(address) || address.length > 254) return null
+  return address
+}
+
+async function emailRoutingRequest(env, zoneId, path = '', options = {}) {
+  if (!env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) {
+    throw new ClientError('Email routing is not configured', 503)
+  }
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${zoneId}/email/routing/rules${path}`,
+    {
+      ...options,
+      headers: {
+        authorization: `Bearer ${env.CLOUDFLARE_EMAIL_ROUTING_TOKEN}`,
+        'content-type': 'application/json',
+        ...options.headers,
+      },
+    },
+  )
+  const result = await response.json().catch(() => null)
+  if (!response.ok || !result?.success) {
+    const detail = result?.errors?.[0]?.message
+    console.error('Email Routing API request failed', response.status, detail || 'Unknown error')
+    throw new ClientError('Email routing is temporarily unavailable', 503)
+  }
+  return result.result
+}
+
+async function createEmailRoutingRule(env, hostname, fullAddress) {
+  const zoneId = parseEmailRoutingZones(env).get(hostname.toLowerCase())
+  if (!zoneId || !env.EMAIL_ROUTING_WORKER) {
+    throw new ClientError('Email routing is not configured for this domain', 503)
+  }
+
+  const rule = await emailRoutingRequest(env, zoneId, '', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: `Vault generated: ${fullAddress}`,
+      enabled: true,
+      matchers: [{ type: 'literal', field: 'to', value: fullAddress }],
+      actions: [{ type: 'worker', value: [env.EMAIL_ROUTING_WORKER] }],
+    }),
+  })
+  if (!rule?.id) throw new ClientError('Email routing did not return a rule identifier', 503)
+  return { ruleId: String(rule.id), zoneId }
+}
+
+async function deleteEmailRoutingRule(env, zoneId, ruleId) {
+  if (!zoneId || !ruleId) return
+  if (!env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) {
+    throw new ClientError('Email routing is not configured', 503)
+  }
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${zoneId}/email/routing/rules/${encodeURIComponent(ruleId)}`,
+    {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${env.CLOUDFLARE_EMAIL_ROUTING_TOKEN}` },
+    },
+  )
+  if (response.ok || response.status === 404) return
+
+  const result = await response.json().catch(() => null)
+  console.error(
+    'Email Routing rule deletion failed',
+    response.status,
+    result?.errors?.[0]?.message || 'Unknown error',
+  )
+  throw new ClientError('Email routing is temporarily unavailable', 503)
+}
+
+export const emailRouting = {
+  parseZones: parseEmailRoutingZones,
+  createRule: createEmailRoutingRule,
+  deleteRule: deleteEmailRoutingRule,
+}
+
+async function listVerifiedForwardingDestinations(env) {
+  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) {
+    return { available: false, destinations: [] }
+  }
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/email/routing/addresses?verified=true`,
+    { headers: { authorization: `Bearer ${env.CLOUDFLARE_EMAIL_ROUTING_TOKEN}` } },
+  )
+  if (!response.ok) throw new ClientError('Forwarding destinations are temporarily unavailable', 503)
+
+  const result = await response.json()
+  const destinations = (result.result || [])
+    .filter((item) => item.verified)
+    .map((item) => ({
+      id: String(item.id),
+      address: normalizeForwardingAddress(item.email),
+      verifiedAt: item.modified || item.created || null,
+    }))
+    .filter((item) => item.address)
+  return { available: true, destinations }
+}
+
+async function validateForwardingSettings(env, deliveryMode, destinationId, forwardTo) {
+  if (deliveryMode === 'vault') {
+    return { deliveryMode: 'vault', destinationId: null, forwardTo: null }
+  }
+  if (deliveryMode !== 'forward') throw new ClientError('Delivery mode must be vault or forward')
+
+  const normalizedAddress = normalizeForwardingAddress(forwardTo)
+  if (!destinationId || !normalizedAddress) throw new ClientError('Select a verified forwarding destination')
+  const { available, destinations } = await listVerifiedForwardingDestinations(env)
+  if (!available) throw new ClientError('Forwarding is not configured', 503)
+  const destination = destinations.find((item) => item.id === destinationId && item.address === normalizedAddress)
+  if (!destination) throw new ClientError('Forwarding destination is not verified')
+  return { deliveryMode: 'forward', destinationId: destination.id, forwardTo: destination.address }
+}
+
+function generateRandomLocalPart() {
+  const values = crypto.getRandomValues(new Uint8Array(3))
+  const word1 = emailWordList[values[0] % emailWordList.length]
+  const word2 = emailWordList[values[1] % emailWordList.length]
+  const suffix = values[2] % 100
+  return `${word1}-${word2}-${suffix}`
+}
+
+function normalizeEmailLocalPart(value) {
+  const local = value.trim().toLowerCase()
+  if (!local) throw new ClientError('Local part is required')
+  if (local.length > maximumLocalPartLength) throw new ClientError('Local part is too long')
+  if (!/^[a-z0-9][a-z0-9._-]*[a-z0-9]$/.test(local) && !/^[a-z0-9]$/.test(local)) {
+    throw new ClientError('Local part must contain only lowercase letters, digits, periods, underscores, or hyphens, and must not start or end with punctuation')
+  }
+  if (/\.{2,}/.test(local)) throw new ClientError('Local part must not contain consecutive dots')
+  return local
+}
+
+function presentEmailAddress(address) {
+  return {
+    id: address.id,
+    localPart: address.local_part,
+    fullAddress: address.full_address,
+    domainId: address.domain_id,
+    hostname: address.hostname || null,
+    generationMode: address.generation_mode,
+    status: address.status,
+    deliveryMode: address.delivery_mode || 'vault',
+    forwardTo: address.forward_to || null,
+    forwardDestinationId: address.forward_destination_id || null,
+    lastMessageAt: address.last_message_at,
+    messageCount: address.message_count ?? 0,
+    unreadCount: address.unread_count ?? 0,
+    storageBytes: address.storage_bytes ?? 0,
+    createdAt: address.created_at,
+    updatedAt: address.updated_at,
+  }
+}
+
+function presentEmailMessage(message) {
+  let headers = {}
+  try {
+    headers = JSON.parse(message.headers_json || '{}')
+  } catch {
+    // retain safe fallback
+  }
+  return {
+    id: message.id,
+    addressId: message.generated_email_id,
+    sender: message.sender,
+    recipient: message.recipient,
+    subject: message.subject,
+    textBody: message.text_body,
+    headers,
+    receivedAt: message.received_at,
+    readAt: message.read_at,
+    rawSizeBytes: message.raw_size_bytes ?? 0,
+    createdAt: message.created_at,
+  }
+}
+
+async function listEmailDomains(request, env) {
+  const configured = parseConfiguredEmailDomains(env)
+  if (!configured.length) return json({ data: [], count: 0 }, 200, request, env)
+
+  const placeholders = configured.map(() => '?').join(', ')
+  const { results } = await env.DB.prepare(`
+    SELECT id, hostname, enabled, health_status, last_checked_at, created_at, updated_at
+    FROM email_domains
+    WHERE hostname IN (${placeholders}) AND enabled = 1 AND health_status = 'available'
+    ORDER BY hostname ASC
+  `).bind(...configured).all()
+
+  const data = results.map((domain) => ({
+    id: domain.id,
+    hostname: domain.hostname,
+    enabled: Boolean(domain.enabled),
+    healthStatus: domain.health_status,
+    lastCheckedAt: domain.last_checked_at,
+    createdAt: domain.created_at,
+    updatedAt: domain.updated_at,
+  }))
+  return json({ data, count: data.length }, 200, request, env)
+}
+
+async function listEmailAddresses(request, env, user) {
+  const { results } = await env.DB.prepare(`
+    SELECT
+      a.id, a.local_part, a.full_address, a.domain_id, a.generation_mode,
+      a.status, a.delivery_mode, a.forward_to, a.forward_destination_id,
+      a.last_message_at, a.created_at, a.updated_at,
+      d.hostname,
+      COALESCE(mc.total, 0) AS message_count,
+      COALESCE(uc.unread, 0) AS unread_count,
+      COALESCE(sc.storage_bytes, 0) AS storage_bytes
+    FROM generated_email_addresses a
+    LEFT JOIN email_domains d ON d.id = a.domain_id
+    LEFT JOIN (
+      SELECT generated_email_id, COUNT(*) AS total
+      FROM received_emails GROUP BY generated_email_id
+    ) mc ON mc.generated_email_id = a.id
+    LEFT JOIN (
+      SELECT generated_email_id, COUNT(*) AS unread
+      FROM received_emails WHERE read_at IS NULL
+      GROUP BY generated_email_id
+    ) uc ON uc.generated_email_id = a.id
+    LEFT JOIN (
+      SELECT generated_email_id, SUM(raw_size_bytes) AS storage_bytes
+      FROM received_emails GROUP BY generated_email_id
+    ) sc ON sc.generated_email_id = a.id
+    WHERE a.user_id = ?
+    ORDER BY a.created_at DESC
+    LIMIT 200
+  `).bind(user.id).all()
+
+  const data = results.map(presentEmailAddress)
+  return json({ data, count: data.length }, 200, request, env)
+}
+
+async function createEmailAddresses(request, env, user) {
+  const body = await readJson(request)
+  const mode = body.mode === 'custom' ? 'custom' : 'random_words'
+  const domainId = cleanText(body.domainId, 'Domain ID', 100)
+  if (!domainId) throw new ClientError('Domain ID is required')
+  const delivery = await validateForwardingSettings(
+    env,
+    body.deliveryMode || 'vault',
+    body.forwardDestinationId,
+    body.forwardTo,
+  )
+
+  let count = typeof body.count === 'number' ? Math.floor(body.count) : 1
+  if (count < 1) count = 1
+  if (count > maximumAddressBatchSize) throw new ClientError(`Maximum ${maximumAddressBatchSize} addresses per request`)
+
+  const configured = parseConfiguredEmailDomains(env)
+  const domain = await env.DB.prepare(`
+    SELECT id, hostname FROM email_domains
+    WHERE id = ? AND enabled = 1 AND health_status = 'available'
+  `).bind(domainId).first()
+  if (!domain || !configured.includes(domain.hostname)) {
+    throw new ClientError('Domain is unavailable', 404)
+  }
+
+  const existingCount = await env.DB.prepare(
+    'SELECT COUNT(*) AS total FROM generated_email_addresses WHERE user_id = ?',
+  ).bind(user.id).first()
+  if ((existingCount?.total || 0) + count > maximumAddressesPerUser) {
+    throw new ClientError(`Address limit of ${maximumAddressesPerUser} reached`, 409)
+  }
+
+  const created = []
+  for (let index = 0; index < count; index += 1) {
+    let localPart
+    let fullAddress
+    let inserted = false
+
+    if (mode === 'custom') {
+      const prefix = typeof body.prefix === 'string' ? body.prefix : ''
+      localPart = normalizeEmailLocalPart(prefix)
+      fullAddress = `${localPart}@${domain.hostname}`
+
+      const existing = await env.DB.prepare(
+        'SELECT id FROM generated_email_addresses WHERE full_address = ? COLLATE NOCASE',
+      ).bind(fullAddress).first()
+      if (existing) throw new ClientError(`Address ${fullAddress} already exists`, 409)
+
+      const id = crypto.randomUUID()
+      const routing = await createEmailRoutingRule(env, domain.hostname, fullAddress)
+      try {
+        const insert = env.DB.prepare(`
+          INSERT INTO generated_email_addresses
+            (id, user_id, domain_id, local_part, full_address, generation_mode, status,
+              delivery_mode, forward_to, forward_destination_id, routing_rule_id, routing_zone_id)
+          VALUES (?, ?, ?, ?, ?, 'custom', 'active', ?, ?, ?, ?, ?)
+        `).bind(
+          id, user.id, domain.id, localPart, fullAddress,
+          delivery.deliveryMode, delivery.forwardTo, delivery.destinationId,
+          routing.ruleId, routing.zoneId,
+        )
+        const audit = await auditStatement(request, env, {
+          userId: user.id,
+          eventType: 'email.address.created',
+          description: 'Email address created',
+          metadata: { addressId: id, fullAddress, mode: 'custom', routingRuleId: routing.ruleId },
+        })
+        await env.DB.batch([insert, audit])
+        inserted = true
+      } catch (error) {
+        try {
+          await deleteEmailRoutingRule(env, routing.zoneId, routing.ruleId)
+        } catch (cleanupError) {
+          console.error('Failed to remove orphaned Email Routing rule', cleanupError)
+        }
+        if (String(error).includes('UNIQUE')) {
+          throw new ClientError(`Address ${fullAddress} already exists`, 409)
+        }
+        throw error
+      }
+
+      if (inserted) {
+        const row = await env.DB.prepare(`
+          SELECT a.*, d.hostname, 0 AS message_count, 0 AS unread_count
+          FROM generated_email_addresses a
+          LEFT JOIN email_domains d ON d.id = a.domain_id
+          WHERE a.id = ?
+        `).bind(id).first()
+        if (row) created.push(presentEmailAddress(row))
+      }
+    } else {
+      // random_words with collision retry
+      for (let attempt = 0; attempt < maximumCollisionRetries; attempt += 1) {
+        localPart = generateRandomLocalPart()
+        fullAddress = `${localPart}@${domain.hostname}`
+        const existing = await env.DB.prepare(
+          'SELECT id FROM generated_email_addresses WHERE full_address = ? COLLATE NOCASE',
+        ).bind(fullAddress).first()
+        if (existing) continue
+
+        const id = crypto.randomUUID()
+        let routing
+        try {
+          routing = await createEmailRoutingRule(env, domain.hostname, fullAddress)
+          const insert = env.DB.prepare(`
+            INSERT INTO generated_email_addresses
+              (id, user_id, domain_id, local_part, full_address, generation_mode, status,
+                delivery_mode, forward_to, forward_destination_id, routing_rule_id, routing_zone_id)
+            VALUES (?, ?, ?, ?, ?, 'random_words', 'active', ?, ?, ?, ?, ?)
+          `).bind(
+            id, user.id, domain.id, localPart, fullAddress,
+            delivery.deliveryMode, delivery.forwardTo, delivery.destinationId,
+            routing.ruleId, routing.zoneId,
+          )
+          const audit = await auditStatement(request, env, {
+            userId: user.id,
+            eventType: 'email.address.created',
+            description: 'Email address created',
+            metadata: { addressId: id, fullAddress, mode: 'random_words', routingRuleId: routing.ruleId },
+          })
+          await env.DB.batch([insert, audit])
+          inserted = true
+        } catch (error) {
+          if (routing) {
+            try {
+              await deleteEmailRoutingRule(env, routing.zoneId, routing.ruleId)
+            } catch (cleanupError) {
+              console.error('Failed to remove orphaned Email Routing rule', cleanupError)
+            }
+          }
+          if (String(error).includes('UNIQUE')) continue
+          throw error
+        }
+        if (inserted) {
+          const row = await env.DB.prepare(`
+            SELECT a.*, d.hostname, 0 AS message_count, 0 AS unread_count
+            FROM generated_email_addresses a
+            LEFT JOIN email_domains d ON d.id = a.domain_id
+            WHERE a.id = ?
+          `).bind(id).first()
+          if (row) created.push(presentEmailAddress(row))
+          break
+        }
+      }
+      if (!inserted) throw new ClientError('Unable to generate a unique address, try again', 409)
+    }
+  }
+
+  return json({ data: created, count: created.length }, 201, request, env)
+}
+
+async function deleteEmailAddress(request, env, user, addressId) {
+  const address = await env.DB.prepare(`
+    SELECT id, full_address, routing_rule_id, routing_zone_id
+    FROM generated_email_addresses WHERE id = ? AND user_id = ?
+  `).bind(addressId, user.id).first()
+  if (!address) return json({ error: 'Address not found' }, 404, request, env)
+
+  await deleteEmailRoutingRule(env, address.routing_zone_id, address.routing_rule_id)
+
+  const remove = env.DB.prepare(
+    'DELETE FROM generated_email_addresses WHERE id = ? AND user_id = ?',
+  ).bind(addressId, user.id)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'email.address.deleted',
+    description: 'Email address deleted',
+    metadata: { addressId, fullAddress: address.full_address },
+  })
+  await env.DB.batch([remove, audit])
+
+  return json({ data: { id: addressId } }, 200, request, env)
+}
+
+async function deleteEmailAddresses(request, env, user) {
+  const body = await readJson(request)
+  const ids = [...new Set(Array.isArray(body.ids) ? body.ids : [])]
+  if (!ids.length || ids.length > 200 || ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) {
+    throw new ClientError('Select between 1 and 200 valid email addresses')
+  }
+
+  const placeholders = ids.map(() => '?').join(', ')
+  const { results } = await env.DB.prepare(`
+    SELECT id, routing_rule_id, routing_zone_id FROM generated_email_addresses
+    WHERE user_id = ? AND id IN (${placeholders})
+  `).bind(user.id, ...ids).all()
+  const ownedIds = results.map((address) => address.id)
+  if (ownedIds.length !== ids.length) throw new ClientError('One or more email addresses were not found', 404)
+
+  for (const address of results) {
+    await deleteEmailRoutingRule(env, address.routing_zone_id, address.routing_rule_id)
+  }
+
+  const ownedPlaceholders = ownedIds.map(() => '?').join(', ')
+  const remove = env.DB.prepare(`
+    DELETE FROM generated_email_addresses
+    WHERE user_id = ? AND id IN (${ownedPlaceholders})
+  `).bind(user.id, ...ownedIds)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'email.addresses.deleted',
+    description: `${ownedIds.length} email addresses deleted`,
+    metadata: { addressIds: ownedIds, count: ownedIds.length },
+  })
+  await env.DB.batch([remove, audit])
+
+  return json({ data: { ids: ownedIds }, count: ownedIds.length }, 200, request, env)
+}
+
+async function getEmailAddress(request, env, user, addressId) {
+  const row = await env.DB.prepare(`
+    SELECT a.*, d.hostname,
+      COALESCE((SELECT COUNT(*) FROM received_emails WHERE generated_email_id = a.id), 0) AS message_count,
+      COALESCE((SELECT COUNT(*) FROM received_emails WHERE generated_email_id = a.id AND read_at IS NULL), 0) AS unread_count,
+      COALESCE((SELECT SUM(raw_size_bytes) FROM received_emails WHERE generated_email_id = a.id), 0) AS storage_bytes
+    FROM generated_email_addresses a
+    LEFT JOIN email_domains d ON d.id = a.domain_id
+    WHERE a.id = ? AND a.user_id = ?
+  `).bind(addressId, user.id).first()
+  if (!row) return json({ error: 'Address not found' }, 404, request, env)
+  return json({ data: presentEmailAddress(row) }, 200, request, env)
+}
+
+async function updateEmailAddress(request, env, user, addressId) {
+  const address = await env.DB.prepare(`
+    SELECT id, status, delivery_mode, forward_to, forward_destination_id
+    FROM generated_email_addresses WHERE id = ? AND user_id = ?
+  `).bind(addressId, user.id).first()
+  if (!address) return json({ error: 'Address not found' }, 404, request, env)
+
+  const body = await readJson(request)
+  const newStatus = body.status === undefined ? address.status : cleanText(body.status, 'Status', 20)
+  if (!['active', 'disabled'].includes(newStatus)) throw new ClientError('Status must be active or disabled')
+  const delivery = await validateForwardingSettings(
+    env,
+    body.deliveryMode || address.delivery_mode || 'vault',
+    body.forwardDestinationId ?? address.forward_destination_id,
+    body.forwardTo ?? address.forward_to,
+  )
+
+  const update = env.DB.prepare(`
+    UPDATE generated_email_addresses
+    SET status = ?, delivery_mode = ?, forward_to = ?, forward_destination_id = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `).bind(
+    newStatus, delivery.deliveryMode, delivery.forwardTo, delivery.destinationId,
+    addressId, user.id,
+  )
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'email.address.settings_changed',
+    description: 'Email address delivery settings changed',
+    metadata: {
+      addressId,
+      previousStatus: address.status,
+      newStatus,
+      previousDeliveryMode: address.delivery_mode,
+      deliveryMode: delivery.deliveryMode,
+      forwardTo: delivery.forwardTo,
+    },
+  })
+  await env.DB.batch([update, audit])
+  return getEmailAddress(request, env, user, addressId)
+}
+
+async function listEmailMessages(request, env, user, url) {
+  const addressId = url.searchParams.get('address')?.trim()
+  const clauses = ['e.user_id = ?']
+  const values = [user.id]
+
+  if (addressId) {
+    const address = await env.DB.prepare(
+      'SELECT id FROM generated_email_addresses WHERE id = ? AND user_id = ?',
+    ).bind(addressId, user.id).first()
+    if (!address) return json({ error: 'Address not found' }, 404, request, env)
+    clauses.push('e.generated_email_id = ?')
+    values.push(addressId)
+  }
+
+  const where = clauses.join(' AND ')
+  const { results } = await env.DB.prepare(`
+    SELECT e.id, e.generated_email_id, e.sender, e.recipient, e.subject,
+      '' AS text_body, e.headers_json, e.received_at, e.read_at, e.raw_size_bytes,
+      e.created_at
+    FROM received_emails e
+    WHERE ${where}
+    ORDER BY e.received_at DESC, e.id DESC
+    LIMIT 200
+  `).bind(...values).all()
+
+  const data = results.map((message) => {
+    const presented = presentEmailMessage(message)
+    delete presented.textBody
+    return presented
+  })
+  return json({ data, count: data.length }, 200, request, env)
+}
+
+async function getEmailMessage(request, env, user, messageId) {
+  const message = await env.DB.prepare(`
+    SELECT id, generated_email_id, sender, recipient, subject,
+      text_body, headers_json, received_at, read_at, raw_size_bytes, created_at
+    FROM received_emails
+    WHERE id = ? AND user_id = ?
+  `).bind(messageId, user.id).first()
+  if (!message) return json({ error: 'Message not found' }, 404, request, env)
+
+  if (message.text_body && message.text_body.length > maximumEmailBodyDisplay) {
+    message.text_body = message.text_body.slice(0, maximumEmailBodyDisplay)
+  }
+  return json({ data: presentEmailMessage(message) }, 200, request, env)
+}
+
+async function refreshAddressLastMessage(env, addressId, userId) {
+  await env.DB.prepare(`
+    UPDATE generated_email_addresses
+    SET last_message_at = (
+      SELECT MAX(received_at) FROM received_emails
+      WHERE generated_email_id = ? AND user_id = ?
+    ), updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `).bind(addressId, userId, addressId, userId).run()
+}
+
+async function deleteOwnedEmailMessages(request, env, user, ids) {
+  const placeholders = ids.map(() => '?').join(', ')
+  const { results } = await env.DB.prepare(`
+    SELECT id, generated_email_id, raw_size_bytes
+    FROM received_emails
+    WHERE user_id = ? AND id IN (${placeholders})
+  `).bind(user.id, ...ids).all()
+  if (results.length !== ids.length) throw new ClientError('One or more email messages were not found', 404)
+
+  const bytesReclaimed = results.reduce((total, message) => total + (message.raw_size_bytes || 0), 0)
+  const addressIds = [...new Set(results.map((message) => message.generated_email_id))]
+  const remove = env.DB.prepare(`
+    DELETE FROM received_emails
+    WHERE user_id = ? AND id IN (${placeholders})
+  `).bind(user.id, ...ids)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: ids.length === 1 ? 'email.message.deleted' : 'email.messages.deleted',
+    description: `${ids.length} email message${ids.length === 1 ? '' : 's'} deleted`,
+    metadata: { messageIds: ids, addressIds, count: ids.length, bytesReclaimed },
+  })
+  await env.DB.batch([remove, audit])
+  for (const addressId of addressIds) await refreshAddressLastMessage(env, addressId, user.id)
+
+  return json({
+    data: { ids, addressIds, bytesReclaimed },
+    count: ids.length,
+  }, 200, request, env)
+}
+
+async function deleteEmailMessage(request, env, user, messageId) {
+  return deleteOwnedEmailMessages(request, env, user, [messageId])
+}
+
+async function deleteEmailMessages(request, env, user) {
+  const body = await readJson(request)
+  const ids = [...new Set(Array.isArray(body.ids) ? body.ids : [])]
+  if (!ids.length || ids.length > 200 || ids.some((id) => !/^[0-9a-f-]{36}$/i.test(id))) {
+    throw new ClientError('Select between 1 and 200 valid email messages')
+  }
+  return deleteOwnedEmailMessages(request, env, user, ids)
+}
+
+async function markEmailMessageRead(request, env, user, messageId) {
+  const message = await env.DB.prepare(`
+    SELECT id, read_at FROM received_emails WHERE id = ? AND user_id = ?
+  `).bind(messageId, user.id).first()
+  if (!message) return json({ error: 'Message not found' }, 404, request, env)
+
+  if (!message.read_at) {
+    await env.DB.prepare(
+      'UPDATE received_emails SET read_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?',
+    ).bind(messageId, user.id).run()
+  }
+
+  const updated = await env.DB.prepare(`
+    SELECT id, generated_email_id, sender, recipient, subject,
+      text_body, headers_json, received_at, read_at, raw_size_bytes, created_at
+    FROM received_emails
+    WHERE id = ? AND user_id = ?
+  `).bind(messageId, user.id).first()
+  if (updated.text_body && updated.text_body.length > maximumEmailBodyDisplay) {
+    updated.text_body = updated.text_body.slice(0, maximumEmailBodyDisplay)
+  }
+  return json({ data: presentEmailMessage(updated) }, 200, request, env)
+}
+
 export default {
   async scheduled(_event, env) {
     await syncAccountStatuses(env)
@@ -1986,6 +2734,10 @@ export default {
         if (request.method === 'PUT') return await updateAiConfig(request, env, authenticatedUser)
         if (request.method === 'DELETE') return await deleteAiConfig(request, env, authenticatedUser)
       }
+      if (url.pathname === '/v1/ai/client-config' && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await getAiClientConfig(request, env, authenticatedUser)
+      }
       if (url.pathname === '/v1/ai/verify' && request.method === 'POST') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         return await verifyAiConnection(request, env)
@@ -1998,6 +2750,10 @@ export default {
       if (url.pathname === '/v1/chat/completions' && request.method === 'POST') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         return await createChatCompletion(request, env, authenticatedUser)
+      }
+      if (url.pathname === '/v1/chat/exchanges' && request.method === 'POST') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await saveChatExchange(request, env, authenticatedUser)
       }
       if (url.pathname === '/v1/accounts') {
         if (request.method === 'GET') return await listAccounts(request, env, url)
@@ -2025,6 +2781,58 @@ export default {
       if (url.pathname === '/v1/settings/2fa/confirm' && request.method === 'POST') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         return await confirmTwoFactor(request, env, authenticatedUser)
+      }
+
+      if (url.pathname === '/v1/email/domains' && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await listEmailDomains(request, env)
+      }
+      if (url.pathname === '/v1/email/addresses') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') return await listEmailAddresses(request, env, authenticatedUser)
+        if (request.method === 'POST') return await createEmailAddresses(request, env, authenticatedUser)
+        if (request.method === 'DELETE') return await deleteEmailAddresses(request, env, authenticatedUser)
+      }
+      if (url.pathname === '/v1/email/forwarding-destinations' && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        const result = await listVerifiedForwardingDestinations(env)
+        return json({ data: result.destinations, available: result.available }, 200, request, env)
+      }
+      if (url.pathname === '/v1/email/messages') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') return await listEmailMessages(request, env, authenticatedUser, url)
+        if (request.method === 'DELETE') return await deleteEmailMessages(request, env, authenticatedUser)
+      }
+
+      const emailAddressMatch = url.pathname.match(/^\/v1\/email\/addresses\/([0-9a-f-]+)$/i)
+      if (emailAddressMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') {
+          return await getEmailAddress(request, env, authenticatedUser, emailAddressMatch[1])
+        }
+        if (request.method === 'PATCH') {
+          return await updateEmailAddress(request, env, authenticatedUser, emailAddressMatch[1])
+        }
+        if (request.method === 'DELETE') {
+          return await deleteEmailAddress(request, env, authenticatedUser, emailAddressMatch[1])
+        }
+      }
+
+      const emailMessageMatch = url.pathname.match(/^\/v1\/email\/messages\/([0-9a-f-]+)$/i)
+      if (emailMessageMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') {
+          return await getEmailMessage(request, env, authenticatedUser, emailMessageMatch[1])
+        }
+        if (request.method === 'DELETE') {
+          return await deleteEmailMessage(request, env, authenticatedUser, emailMessageMatch[1])
+        }
+      }
+
+      const emailMessageReadMatch = url.pathname.match(/^\/v1\/email\/messages\/([0-9a-f-]+)\/read$/i)
+      if (emailMessageReadMatch && request.method === 'POST') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await markEmailMessageRead(request, env, authenticatedUser, emailMessageReadMatch[1])
       }
 
       const match = url.pathname.match(/^\/v1\/accounts\/([0-9a-f-]+)$/i)

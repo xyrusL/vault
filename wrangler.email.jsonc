@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vault-email-worker",
+  "main": "vault-worker.js",
+  "compatibility_date": "2026-07-10",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": false,
+  "vars": {
+    "EMAIL_DOMAINS": "tpmail.deze.me,octagram.qzz.io"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vault-db",
+      "database_id": "deddf748-bf00-423f-ba2c-a4ef0a62a7da",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

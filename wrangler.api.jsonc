@@ -12,7 +12,11 @@
     }
   ],
   "vars": {
-    "ALLOWED_ORIGIN": "https://vault.deze.me,https://www.vault.deze.me"
+    "ALLOWED_ORIGIN": "https://vault.deze.me,https://www.vault.deze.me",
+    "EMAIL_DOMAINS": "tpmail.deze.me,octagram.qzz.io",
+    "EMAIL_ROUTING_ZONES": "tpmail.deze.me=60be8001944d6c2354d8ccedc81bf06a,octagram.qzz.io=a8972358f3510337c411f40e7030b1fb",
+    "EMAIL_ROUTING_WORKER": "vault-email-worker",
+    "CLOUDFLARE_ACCOUNT_ID": "4002cabf9107796667c42a5eed175298"
   },
   "triggers": {
     "crons": ["0 * * * *"]
