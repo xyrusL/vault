@@ -640,6 +640,45 @@ select:autofill {
   color: #94a3b8;
 }
 
+.chat-ai-table-wrap {
+  max-width: 100%;
+  margin: 0.8rem 0;
+  overflow-x: auto;
+  border: 1px solid rgba(103, 232, 249, 0.14);
+  border-radius: 0.75rem;
+}
+
+.chat-ai-table-wrap table {
+  width: 100%;
+  min-width: 34rem;
+  border-collapse: collapse;
+  background: rgba(2, 12, 18, 0.42);
+  font-size: 0.75rem;
+}
+
+.chat-ai-table-wrap th,
+.chat-ai-table-wrap td {
+  padding: 0.65rem 0.8rem;
+  border-right: 1px solid rgba(148, 163, 184, 0.1);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  text-align: left;
+  vertical-align: top;
+}
+
+.chat-ai-table-wrap th {
+  background: rgba(34, 211, 238, 0.08);
+  color: #cffafe;
+  font-weight: 600;
+}
+
+.chat-ai-table-wrap tr:last-child td { border-bottom: 0; }
+.chat-ai-table-wrap th:last-child,
+.chat-ai-table-wrap td:last-child { border-right: 0; }
+
+.chat-ai-table-wrap tbody tr:nth-child(even) {
+  background: rgba(148, 163, 184, 0.025);
+}
+
 .note-content-editor:empty::before {
   content: attr(data-placeholder);
   pointer-events: none;

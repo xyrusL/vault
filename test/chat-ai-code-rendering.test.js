@@ -20,9 +20,17 @@ test("AI code renders inline with language and copy feedback", () => {
 
 test("Markdown formatting renders in user and AI messages", () => {
   assert.match(view, /chat-ai-markdown-user/);
-  assert.match(view, /<Markdown components=\{chatMarkdownComponents\}>\{message\.content\}<\/Markdown>/);
+  assert.match(view, /<Markdown components=\{chatMarkdownComponents\} remarkPlugins=\{chatMarkdownPlugins\}>\{message\.content\}<\/Markdown>/);
   assert.doesNotMatch(view, /<p className="whitespace-pre-wrap break-words text-sm leading-relaxed">\{message\.content\}<\/p>/);
   assert.match(styles, /\.chat-ai-markdown-user strong/);
+});
+
+test("GitHub Markdown tables render as responsive tables", () => {
+  assert.match(view, /import remarkGfm from "remark-gfm"/);
+  assert.match(view, /function ChatTable/);
+  assert.match(view, /table: ChatTable/);
+  assert.match(styles, /\.chat-ai-table-wrap table/);
+  assert.match(styles, /overflow-x: auto/);
 });
 
 test("AI can generate unrestricted original templates directly in chat", () => {

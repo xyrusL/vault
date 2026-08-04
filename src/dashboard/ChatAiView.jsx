@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   Atom,
   Bot,
@@ -963,7 +964,12 @@ function ChatCodeBlock({ children }) {
   );
 }
 
-const chatMarkdownComponents = { pre: ChatCodeBlock };
+function ChatTable({ children }) {
+  return <div className="chat-ai-table-wrap"><table>{children}</table></div>;
+}
+
+const chatMarkdownComponents = { pre: ChatCodeBlock, table: ChatTable };
+const chatMarkdownPlugins = [remarkGfm];
 
 const chatFileExtensions = new Set(["css", "csv", "html", "htm", "java", "js", "jsx", "json", "md", "php", "py", "rb", "rs", "sql", "svg", "toml", "ts", "tsx", "txt", "vue", "xml", "yaml", "yml"]);
 
@@ -1494,7 +1500,7 @@ export default function ChatAiView() {
                       <div className={`rounded-2xl px-5 py-4 ${message.imageUrl ? "max-w-[760px]" : message.role === "user" ? "max-w-[46%]" : message.content.includes("```") ? "max-w-[88%]" : "max-w-[64%]"} ${message.role === "user" ? "rounded-br-md bg-gradient-to-br from-cyan-300/[0.13] to-sky-500/[0.08] text-cyan-50" : "rounded-bl-md border border-cyan-100/10 bg-[#07121a]/90 text-slate-200"}`}>
                         <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-cyan-300/70"><span>{message.role === "user" ? "You" : message.providerName || "AI"}</span>{message.role !== "user" && message.model && <span className="max-w-48 truncate text-[9px] font-normal normal-case tracking-normal text-slate-500" title={message.model}>{message.model}</span>}</p>
                         <div className={`chat-ai-markdown ${message.role === "user" ? "chat-ai-markdown-user" : ""}`}>
-                          <Markdown components={chatMarkdownComponents}>{message.content}</Markdown>
+                          <Markdown components={chatMarkdownComponents} remarkPlugins={chatMarkdownPlugins}>{message.content}</Markdown>
                         </div>
                         {message.toolActivity?.length > 0 && <ToolActivity calls={message.toolActivity} />}
                         {message.imageUrl && <GeneratedImage message={message} />}
