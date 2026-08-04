@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { Eye, EyeOff, LoaderCircle, ShieldCheck } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { apiFetch } from "../api";
-import { Field, Modal, PageTitle } from "./DashboardUi";
+import { Field, Modal } from "./DashboardUi";
 
-const themes = ["midnight", "ocean", "oled"];
+const themes = ["dark", "gray", "midnight"];
 const emptyPasswords = {
   currentPassword: "",
   newPassword: "",
@@ -245,12 +245,7 @@ export default function SettingsView({
 
   return (
     <section>
-      <PageTitle
-        eyebrow="Personal controls"
-        title="Settings"
-        text="Manage your administrator identity, password, and visual preferences."
-      />
-      <div className="mt-7 grid gap-5 xl:grid-cols-2">
+      <div className="grid gap-5 xl:grid-cols-2">
         <form onSubmit={saveProfile} className="panel space-y-4">
           <h2 className="text-lg font-semibold">Account profile</h2>
           <Field
@@ -333,7 +328,7 @@ export default function SettingsView({
             {!twoFactorLoading && !twoFactorError && (
               <div className="flex shrink-0 items-center gap-3">
                 <span
-                  className={`rounded-full border px-3 py-1 text-xs font-semibold ${twoFactor.enabled ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-300" : "border-white/10 text-slate-400"}`}
+                  className={`inline-flex h-10 min-w-24 items-center justify-center rounded-lg border px-4 text-xs font-semibold ${twoFactor.enabled ? "border-emerald-300/30 bg-emerald-300/10 text-emerald-300" : "border-white/10 text-slate-400"}`}
                 >
                   {twoFactor.enabled ? "Enabled" : "Disabled"}
                 </span>
@@ -348,7 +343,7 @@ export default function SettingsView({
                       : startTwoFactorSetup
                   }
                   disabled={twoFactorBusy}
-                  className={`h-10 rounded-lg px-4 text-sm font-semibold disabled:opacity-50 ${twoFactor.enabled ? "border border-red-300/30 text-red-300" : "bg-cyan-500 text-[#021012]"}`}
+                  className={`h-10 min-w-24 rounded-lg px-4 text-sm font-semibold disabled:opacity-50 ${twoFactor.enabled ? "border border-red-300/30 text-red-300" : "bg-cyan-500 text-[#021012]"}`}
                 >
                   {twoFactorBusy ? "Please wait..." : twoFactor.enabled ? "Disable" : "Enable"}
                 </button>

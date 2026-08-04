@@ -24,3 +24,11 @@ test('email UI confirms deletion and displays recorded storage sizes', () => {
   assert.match(viewSource, /recorded storage will be reclaimed/)
   assert.match(viewSource, /Delete message/)
 })
+
+test('email UI refreshes cached messages and explains forwarding history', () => {
+  assert.doesNotMatch(viewSource, /if \(!emailGeneratorCache\) refreshAll\(\)/)
+  assert.match(viewSource, /useEffect\(\(\) => \{\s*refreshAll\(\)/)
+  assert.match(viewSource, /loadMessages\(\)\.catch/)
+  assert.match(viewSource, /Earlier Vault messages remain available/)
+  assert.match(viewSource, /Stored messages/)
+})

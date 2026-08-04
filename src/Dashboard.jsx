@@ -7,18 +7,24 @@ import {
   DashboardOverview,
 } from "./dashboard/AccountsViews";
 import ActivityView from "./dashboard/ActivityView";
+import AuthenticatorView from "./dashboard/AuthenticatorView";
 import BackupView from "./dashboard/BackupView";
 import ChatAiView from "./dashboard/ChatAiView";
 import { DashboardHeader, Sidebar } from "./dashboard/DashboardChrome";
 import { Modal } from "./dashboard/DashboardUi";
 import EmailGeneratorView from "./dashboard/EmailGeneratorView";
+import NotesView from "./dashboard/NotesView";
+import PluginsView from "./dashboard/PluginsView";
 import SettingsView from "./dashboard/SettingsView";
+import VaultView from "./dashboard/VaultView";
 
 const notificationStorageKey = "vault_notifications_read_at";
 const themeStorageKey = "vault_theme";
+const dashboardThemes = new Set(["dark", "gray", "midnight"]);
 
 function Dashboard() {
   const [activePage, setActivePage] = useState("dashboard");
+  const [chatInitialized, setChatInitialized] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState(null);
@@ -34,7 +40,10 @@ function Dashboard() {
     () => localStorage.getItem(notificationStorageKey) || "",
   );
   const [theme, setTheme] = useState(
-    () => localStorage.getItem(themeStorageKey) || "midnight",
+    () => {
+      const savedTheme = localStorage.getItem(themeStorageKey);
+      return dashboardThemes.has(savedTheme) ? savedTheme : "midnight";
+    },
   );
 
   async function loadData() {
@@ -91,6 +100,10 @@ function Dashboard() {
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (activePage === "chat-ai") setChatInitialized(true);
+  }, [activePage]);
 
   async function refreshActivity() {
     try {
@@ -174,8 +187,6 @@ function Dashboard() {
       new Date(`${item.created_at}Z`) > new Date(notificationsReadAt),
   );
   const notificationLevel = getNotificationLevel(apiHealthy, unreadActivity);
-  const showHeader = activePage === "dashboard";
-
   function renderActivePage() {
     switch (activePage) {
       case "accounts":
@@ -188,14 +199,23 @@ function Dashboard() {
             onAccountUpdated={handleAccountUpdated}
           />
         );
-      case "email-generator":
+      case "vault":
+        return <VaultView />;
+    case "email-generator":
         return (
           <EmailGeneratorView
             onAddressesChange={handleEmailAddressesChange}
           />
-        );
+      );
+
+    case "authenticator":
+      return <AuthenticatorView />;
       case "chat-ai":
-        return <ChatAiView />;
+        return null;
+      case "notes":
+        return <NotesView />;
+      case "plugins":
+        return <PluginsView />;
       case "activity":
         return (
           <ActivityView
@@ -224,6 +244,8 @@ function Dashboard() {
             apiHealthy={apiHealthy}
             user={user}
             emailAddresses={emailAddresses}
+            onNavigate={setActivePage}
+            onAddAccount={() => setAccountModalOpen(true)}
           />
         );
     }
@@ -235,24 +257,29 @@ function Dashboard() {
     >
       <Sidebar
         activePage={activePage}
+        user={user}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
         onNavigate={setActivePage}
         onLogout={() => setLogoutOpen(true)}
       />
       <div className="lg:pl-[256px]">
-        {showHeader && (
-          <DashboardHeader
-            user={user}
-            notificationLevel={notificationLevel}
-            onMenuOpen={() => setMenuOpen(true)}
-            onNotifications={openNotifications}
-            onNavigate={setActivePage}
-            onLogout={() => setLogoutOpen(true)}
-          />
-        )}
-        <div className="dashboard-content mx-auto max-w-[1360px] px-4 py-3 sm:px-7">
-          {renderActivePage()}
+        <DashboardHeader
+          activePage={activePage}
+          user={user}
+          notificationLevel={notificationLevel}
+          onMenuOpen={() => setMenuOpen(true)}
+          onNotifications={openNotifications}
+          onNavigate={setActivePage}
+          onLogout={() => setLogoutOpen(true)}
+        />
+        <div className="dashboard-content mx-auto max-w-[1440px] px-4 py-5 sm:px-7 sm:py-6">
+          {activePage !== "chat-ai" && renderActivePage()}
+          {(chatInitialized || activePage === "chat-ai") && (
+            <div className={activePage === "chat-ai" ? "" : "hidden"} aria-hidden={activePage !== "chat-ai"}>
+              <ChatAiView />
+            </div>
+          )}
         </div>
       </div>
 

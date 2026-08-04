@@ -11,10 +11,18 @@ const accountListFields = `
 `
 const accountStatuses = new Set(['Active', 'Inactive', 'Expiring Soon', 'Expired'])
 const maximumBodyBytes = 16 * 1024
+const maximumVaultBodyBytes = 32 * 1024
 const maximumChatBodyBytes = 96 * 1024
 const maximumUpstreamResponseBytes = 1024 * 1024
 const upstreamTimeoutMilliseconds = 30 * 1000
 const supportedApiModes = new Set(['openai-compatible', 'openai-responses', 'anthropic-messages'])
+const vaultSecretTypes = new Set(['api_key', 'token', 'config', 'credential', 'other'])
+const pluginFields = {
+  spotify: { allowed: ['accountName', 'clientId', 'clientSecret', 'refreshToken', 'market'], required: ['accountName', 'clientId', 'clientSecret'] },
+  facebook: { allowed: ['accountName', 'appId', 'appSecret', 'accessToken', 'pageId'], required: ['accountName', 'appId', 'appSecret'] },
+  discord: { allowed: ['accountName', 'applicationId', 'botToken', 'publicKey', 'guildId'], required: ['accountName', 'applicationId', 'botToken'] },
+  google_workspace: { allowed: ['accountName', 'clientId', 'clientSecret', 'refreshToken', 'workspaceDomain'], required: ['accountName', 'clientId', 'clientSecret'] },
+}
 const twoFactorChallengeLifetimeMilliseconds = 5 * 60 * 1000
 const maximumTwoFactorAttempts = 5
 const maximumAddressesPerUser = 50
@@ -22,6 +30,7 @@ const maximumAddressBatchSize = 10
 const maximumCollisionRetries = 5
 const maximumLocalPartLength = 64
 const maximumEmailBodyDisplay = 64 * 1024
+const emailRoutingSyncDelaysMilliseconds = [0, 250, 500, 1000, 2000]
 
 // Curated readable word list for random address generation
 const emailWordList = [
@@ -208,6 +217,13 @@ function cleanText(value, field, maximum, fallback = '') {
   return cleaned
 }
 
+function secretText(value, field, maximum) {
+  if (typeof value !== 'string') throw new ClientError(`${field} must be text`)
+  if (value.length > maximum) throw new ClientError(`${field} is too long`)
+  if (!value.trim()) throw new ClientError(`${field} is required`)
+  return value
+}
+
 function isValidEmail(email) {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
@@ -367,6 +383,105 @@ function isValidTotpCode(code) {
 function verifyTotpCode(secret, label, code) {
   if (!isValidTotpCode(code)) return false
   return createTotp(secret, label).validate({ token: code, window: 1 }) !== null
+}
+
+function parseAuthenticatorUri(value) {
+  if (typeof value !== 'string' || value.length > 4096) return null
+  try {
+    const authenticator = OTPAuth.URI.parse(value.trim())
+    if (!(authenticator instanceof OTPAuth.TOTP)) return null
+    return {
+      issuer: authenticator.issuer || 'Authenticator',
+      accountName: authenticator.label,
+      secret: authenticator.secret.base32,
+      algorithm: authenticator.algorithm,
+      digits: authenticator.digits,
+      period: authenticator.period,
+    }
+  } catch {
+    return null
+  }
+}
+
+function normalizeAuthenticatorEntry(body) {
+  const parsed = body.uri ? parseAuthenticatorUri(body.uri) : null
+  if (body.uri && !parsed) throw new ClientError('Authenticator QR or setup URI is invalid')
+  const issuer = cleanText(parsed?.issuer ?? body.issuer, 'Issuer', 120)
+  const accountName = cleanText(parsed?.accountName ?? body.accountName, 'Account name', 254)
+  const secret = String(parsed?.secret ?? body.secret ?? '').replace(/[\s-]/g, '').toUpperCase()
+  const algorithm = String(parsed?.algorithm ?? body.algorithm ?? 'SHA1').toUpperCase()
+  const digits = Number(parsed?.digits ?? body.digits ?? 6)
+  const period = Number(parsed?.period ?? body.period ?? 30)
+  if (!issuer || !accountName) throw new ClientError('Issuer and account name are required')
+  if (!/^[A-Z2-7]+=*$/.test(secret) || secret.length < 16 || secret.length > 256) throw new ClientError('Authenticator secret is invalid')
+  if (!['SHA1', 'SHA256', 'SHA512'].includes(algorithm)) throw new ClientError('Authenticator algorithm is invalid')
+  if (![6, 8].includes(digits)) throw new ClientError('Authenticator digits must be 6 or 8')
+  if (!Number.isInteger(period) || period < 15 || period > 120) throw new ClientError('Authenticator period is invalid')
+  try {
+    new OTPAuth.Secret({ base32: secret })
+  } catch {
+    throw new ClientError('Authenticator secret is invalid')
+  }
+  return { issuer, accountName, secret, algorithm, digits, period }
+}
+
+async function listAuthenticatorEntries(request, env, user) {
+  const result = await env.DB.prepare(`
+    SELECT id, issuer, account_name, secret_ciphertext, secret_iv,
+      algorithm, digits, period, created_at, updated_at
+    FROM authenticator_entries
+    WHERE user_id = ?
+    ORDER BY issuer COLLATE NOCASE, account_name COLLATE NOCASE
+  `).bind(user.id).all()
+  const data = await Promise.all((result.results || []).map(async (entry) => ({
+    id: entry.id,
+    issuer: entry.issuer,
+    accountName: entry.account_name,
+    secret: await decryptCredential(entry.secret_ciphertext, entry.secret_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+    algorithm: entry.algorithm,
+    digits: entry.digits,
+    period: entry.period,
+    createdAt: entry.created_at,
+    updatedAt: entry.updated_at,
+  })))
+  return json({ data }, 200, request, env)
+}
+
+async function createAuthenticatorEntry(request, env, user) {
+  const entry = normalizeAuthenticatorEntry(await readJson(request))
+  const id = crypto.randomUUID()
+  const encrypted = await encryptPassword(entry.secret, env.CREDENTIALS_ENCRYPTION_KEY)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'authenticator.created',
+    description: 'Authenticator entry created',
+    metadata: { authenticatorId: id, issuer: entry.issuer },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO authenticator_entries
+        (id, user_id, issuer, account_name, secret_ciphertext, secret_iv, algorithm, digits, period)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(id, user.id, entry.issuer, entry.accountName, encrypted.ciphertext, encrypted.iv, entry.algorithm, entry.digits, entry.period),
+    audit,
+  ])
+  return json({ data: { id, ...entry } }, 201, request, env)
+}
+
+async function deleteAuthenticatorEntry(request, env, user, id) {
+  const existing = await env.DB.prepare('SELECT issuer FROM authenticator_entries WHERE id = ? AND user_id = ?').bind(id, user.id).first()
+  if (!existing) return json({ error: 'Authenticator entry not found' }, 404, request, env)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'authenticator.deleted',
+    description: 'Authenticator entry deleted',
+    metadata: { authenticatorId: id, issuer: existing.issuer },
+  })
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM authenticator_entries WHERE id = ? AND user_id = ?').bind(id, user.id),
+    audit,
+  ])
+  return json({ data: { id } }, 200, request, env)
 }
 
 async function issueSession(request, env, user, remember, clientKey, auditEvent = 'auth.login.succeeded') {
@@ -584,7 +699,7 @@ async function logout(request, env, user) {
 
 async function importEncryptionKey(encodedKey) {
   if (!encodedKey) throw new Error('Encryption key is not configured')
-  const bytes = Uint8Array.from(atob(encodedKey), (character) => character.charCodeAt(0))
+  const bytes = fromBase64(encodedKey)
   if (bytes.byteLength !== 32) throw new Error('Encryption key must be 32 bytes')
   return crypto.subtle.importKey('raw', bytes, 'AES-GCM', false, ['encrypt', 'decrypt'])
 }
@@ -863,7 +978,7 @@ function isBlockedIpv4(hostname) {
   const parts = hostname.split('.')
   if (parts.length !== 4 || parts.some((part) => !/^\d+$/.test(part))) return false
   const octets = parts.map(Number)
-  if (octets.some((octet) => octet < 0 || octet > 255)) return true
+  if (octets.some((octet) => octet > 255)) return true
   const [first, second] = octets
   return first === 0
     || first === 10
@@ -913,6 +1028,7 @@ function normalizeProviderBaseUrl(value) {
   }
 
   url.pathname = url.pathname.replace(/\/+$/, '')
+  if (!/\/v\d+$/i.test(url.pathname)) url.pathname = `${url.pathname}/v1`
   return url.toString().replace(/\/$/, '')
 }
 
@@ -1391,6 +1507,46 @@ async function listActivity(request, env) {
   return json({ data: activity, count: activity.length }, 200, request, env)
 }
 
+async function getEmailActivityStats(request, env, user, url) {
+  const requestedDays = Number(url.searchParams.get('days') || 7)
+  const days = [1, 7, 30, 90].includes(requestedDays) ? requestedDays : 7
+  const startModifier = `-${days - 1} days`
+  const bucketExpression = days === 1
+    ? "strftime('%Y-%m-%dT%H:00:00Z', created_at)"
+    : "substr(created_at, 1, 10)"
+  const { results } = await env.DB.prepare(`
+    SELECT ${bucketExpression} AS bucket,
+      SUM(CASE WHEN event_type IN ('email.received', 'email.forwarded') THEN 1 ELSE 0 END) AS received,
+      SUM(CASE WHEN event_type = 'email.address.created' THEN 1 ELSE 0 END) AS generated
+    FROM activity_logs
+    WHERE user_id = ?
+      AND event_type IN ('email.received', 'email.forwarded', 'email.address.created')
+      AND datetime(created_at) >= datetime('now', 'start of day', ?)
+    GROUP BY ${bucketExpression}
+    ORDER BY bucket ASC
+  `).bind(user.id, startModifier).all()
+  const totalsByBucket = new Map(results.map((row) => [row.bucket, row]))
+  const today = new Date()
+  today.setUTCHours(0, 0, 0, 0)
+  const bucketCount = days === 1 ? 24 : days
+  const data = Array.from({ length: bucketCount }, (_, index) => {
+    const date = new Date(today)
+    if (days === 1) date.setUTCHours(index)
+    else date.setUTCDate(date.getUTCDate() - (days - 1 - index))
+    const bucket = days === 1
+      ? `${date.toISOString().slice(0, 13)}:00:00Z`
+      : date.toISOString().slice(0, 10)
+    const totals = totalsByBucket.get(bucket)
+    return {
+      day: bucket,
+      received: Number(totals?.received || 0),
+      generated: Number(totals?.generated || 0),
+    }
+  })
+
+  return json({ data, days }, 200, request, env)
+}
+
 async function updateProfile(request, env, user) {
   const body = await readJson(request)
   const fields = []
@@ -1494,13 +1650,23 @@ async function updatePassword(request, env, user) {
 
 function presentAiConnection(connection) {
   if (!connection) return null
+  let models = []
+  try {
+    models = JSON.parse(connection.models_json || '[]')
+  } catch {
+    models = []
+  }
+  if (!Array.isArray(models) || !models.length) models = [connection.model]
   return {
+    id: connection.id,
     providerId: connection.provider_id,
     providerName: connection.provider_name,
     apiMode: connection.api_mode,
     baseUrl: connection.base_url,
     model: connection.model,
+    models,
     status: connection.status,
+    isActive: Boolean(connection.is_active),
     lastVerifiedAt: connection.last_verified_at,
     createdAt: connection.created_at,
     updatedAt: connection.updated_at,
@@ -1522,26 +1688,34 @@ function presentMessage(message) {
     conversationId: message.conversation_id,
     role: message.role,
     content: message.content,
+    providerName: message.provider_name || null,
+    model: message.model || null,
     createdAt: message.created_at,
   }
 }
 
 async function getAiConfig(request, env, user) {
-  const connection = await env.DB.prepare(`
-    SELECT provider_id, provider_name, api_mode, base_url, model, status,
-      last_verified_at, created_at, updated_at
+  const { results } = await env.DB.prepare(`
+    SELECT id, provider_id, provider_name, api_mode, base_url, model, models_json, status,
+      is_active, last_verified_at, created_at, updated_at
     FROM ai_connections WHERE user_id = ?
-  `).bind(user.id).first()
-  return json({ data: presentAiConnection(connection) }, 200, request, env)
+    ORDER BY is_active DESC, updated_at DESC
+  `).bind(user.id).all()
+  const profiles = results.map(presentAiConnection)
+  return json({ data: profiles.find((profile) => profile.isActive) || null, profiles }, 200, request, env)
 }
 
-async function getAiClientConfig(request, env, user) {
+async function getAiClientConfig(request, env, user, connectionId = null) {
   const connection = await env.DB.prepare(`
-    SELECT provider_id, provider_name, api_mode, base_url, api_key_ciphertext, api_key_iv,
-      model, status, last_verified_at, created_at, updated_at
-    FROM ai_connections WHERE user_id = ?
-  `).bind(user.id).first()
-  if (!connection) return json({ data: null }, 200, request, env)
+    SELECT id, provider_id, provider_name, api_mode, base_url, api_key_ciphertext, api_key_iv,
+      model, models_json, status, is_active, last_verified_at, created_at, updated_at
+    FROM ai_connections
+    WHERE user_id = ? ${connectionId ? 'AND id = ?' : ''}
+    ORDER BY is_active DESC, updated_at DESC LIMIT 1
+  `).bind(user.id, ...(connectionId ? [connectionId] : [])).first()
+  if (!connection) {
+    return json({ data: null, profiles: [] }, connectionId ? 404 : 200, request, env)
+  }
 
   let apiKey
   try {
@@ -1554,7 +1728,16 @@ async function getAiClientConfig(request, env, user) {
     throw new ClientError('AI provider credentials are unavailable', 503)
   }
 
-  return json({ data: { ...presentAiConnection(connection), apiKey } }, 200, request, env)
+  const { results } = await env.DB.prepare(`
+    SELECT id, provider_id, provider_name, api_mode, base_url, model, models_json, status,
+      is_active, last_verified_at, created_at, updated_at
+    FROM ai_connections WHERE user_id = ?
+    ORDER BY is_active DESC, updated_at DESC
+  `).bind(user.id).all()
+  return json({
+    data: { ...presentAiConnection(connection), apiKey },
+    profiles: results.map(presentAiConnection),
+  }, 200, request, env)
 }
 
 async function verifyAiConnection(request, env) {
@@ -1583,7 +1766,7 @@ async function verifyAiConnection(request, env) {
   }, 200, request, env)
 }
 
-async function updateAiConfig(request, env, user) {
+async function updateAiConfig(request, env, user, connectionId = null) {
   const body = await readJson(request)
   const baseUrl = normalizeProviderBaseUrl(body.baseUrl)
   const providerId = normalizeProviderId(body.providerId)
@@ -1592,48 +1775,98 @@ async function updateAiConfig(request, env, user) {
   const apiKey = cleanText(body.apiKey, 'API key', 8192)
   const model = cleanText(body.model, 'Model', 200)
   if (!model) throw new ClientError('Model is required')
+  const models = [...new Set([
+    model,
+    ...(Array.isArray(body.models) ? body.models : []),
+  ].map((item) => String(item || '').trim()).filter(Boolean))]
+    .filter((item) => item.length <= 200)
+    .slice(0, 500)
+  const modelsJson = JSON.stringify(models)
 
   const encrypted = await encryptPassword(apiKey, env.CREDENTIALS_ENCRYPTION_KEY)
   body.apiKey = null
+  if (connectionId) {
+    const owned = await env.DB.prepare(
+      'SELECT id FROM ai_connections WHERE id = ? AND user_id = ?',
+    ).bind(connectionId, user.id).first()
+    if (!owned) return json({ error: 'AI endpoint not found' }, 404, request, env)
+  }
+  const id = connectionId || crypto.randomUUID()
+  const shouldActivate = !connectionId || Boolean(body.activate)
   const audit = await auditStatement(request, env, {
     userId: user.id,
-    eventType: 'ai.config.updated',
-    description: 'AI provider configuration updated',
+    eventType: connectionId ? 'ai.config.updated' : 'ai.config.created',
+    description: connectionId ? 'AI provider configuration updated' : 'AI provider configuration created',
+    metadata: { connectionId: id },
   })
-  await env.DB.batch([
-    env.DB.prepare(`
+  const statements = []
+  if (shouldActivate) {
+    statements.push(env.DB.prepare(
+      'UPDATE ai_connections SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?',
+    ).bind(user.id))
+  }
+  statements.push(connectionId
+    ? env.DB.prepare(`
+      UPDATE ai_connections SET provider_id = ?, provider_name = ?, api_mode = ?,
+        base_url = ?, api_key_ciphertext = ?, api_key_iv = ?, model = ?, models_json = ?, status = 'verified',
+        last_verified_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+        ${shouldActivate ? ', is_active = 1' : ''}
+      WHERE id = ? AND user_id = ?
+    `).bind(providerId, providerName, apiMode, baseUrl, encrypted.ciphertext, encrypted.iv, model, modelsJson, id, user.id)
+    : env.DB.prepare(`
       INSERT INTO ai_connections (
-        user_id, provider_id, provider_name, api_mode, base_url, api_key_ciphertext, api_key_iv,
-        model, status, last_verified_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', CURRENT_TIMESTAMP)
-      ON CONFLICT(user_id) DO UPDATE SET
-        provider_id = excluded.provider_id,
-        provider_name = excluded.provider_name,
-        api_mode = excluded.api_mode,
-        base_url = excluded.base_url,
-        api_key_ciphertext = excluded.api_key_ciphertext,
-        api_key_iv = excluded.api_key_iv,
-        model = excluded.model,
-        status = 'verified',
-        last_verified_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP
-    `).bind(user.id, providerId, providerName, apiMode, baseUrl, encrypted.ciphertext, encrypted.iv, model),
-    audit,
-  ])
-  return getAiConfig(request, env, user)
+        id, user_id, provider_id, provider_name, api_mode, base_url,
+        api_key_ciphertext, api_key_iv, model, models_json, status, is_active, last_verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'verified', 1, CURRENT_TIMESTAMP)
+    `).bind(id, user.id, providerId, providerName, apiMode, baseUrl, encrypted.ciphertext, encrypted.iv, model, modelsJson))
+  statements.push(audit)
+  await env.DB.batch(statements)
+  return getAiClientConfig(request, env, user, id)
 }
 
-async function deleteAiConfig(request, env, user) {
+async function activateAiConfig(request, env, user, connectionId) {
+  const connection = await env.DB.prepare(
+    'SELECT id FROM ai_connections WHERE id = ? AND user_id = ?',
+  ).bind(connectionId, user.id).first()
+  if (!connection) return json({ error: 'AI endpoint not found' }, 404, request, env)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'ai.config.activated',
+    description: 'AI provider configuration activated',
+    metadata: { connectionId },
+  })
+  await env.DB.batch([
+    env.DB.prepare('UPDATE ai_connections SET is_active = 0 WHERE user_id = ?').bind(user.id),
+    env.DB.prepare('UPDATE ai_connections SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?').bind(connectionId, user.id),
+    audit,
+  ])
+  return getAiClientConfig(request, env, user, connectionId)
+}
+
+async function deleteAiConfig(request, env, user, connectionId = null) {
+  const connection = await env.DB.prepare(`
+    SELECT id, is_active FROM ai_connections
+    WHERE user_id = ? ${connectionId ? 'AND id = ?' : 'AND is_active = 1'} LIMIT 1
+  `).bind(user.id, ...(connectionId ? [connectionId] : [])).first()
+  if (!connection) return json({ error: 'AI endpoint not found' }, 404, request, env)
   const audit = await auditStatement(request, env, {
     userId: user.id,
     eventType: 'ai.config.deleted',
     description: 'AI provider configuration deleted',
+    metadata: { connectionId: connection.id },
   })
-  await env.DB.batch([
-    env.DB.prepare('DELETE FROM ai_connections WHERE user_id = ?').bind(user.id),
-    audit,
-  ])
-  return new Response(null, { status: 204, headers: corsHeaders(request, env) })
+  const statements = [
+    env.DB.prepare('DELETE FROM ai_connections WHERE id = ? AND user_id = ?').bind(connection.id, user.id),
+  ]
+  if (connection.is_active) {
+    statements.push(env.DB.prepare(`
+      UPDATE ai_connections SET is_active = 1, updated_at = CURRENT_TIMESTAMP
+      WHERE id = (SELECT id FROM ai_connections WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1)
+    `).bind(user.id))
+  }
+  statements.push(audit)
+  await env.DB.batch(statements)
+  return getAiClientConfig(request, env, user)
 }
 
 async function listConversations(request, env, user) {
@@ -1645,6 +1878,125 @@ async function listConversations(request, env, user) {
     LIMIT 100
   `).bind(user.id).all()
   return json({ data: results.map(presentConversation), count: results.length }, 200, request, env)
+}
+
+async function getDashboardStats(request, env, user) {
+  const [accounts, email, other] = await Promise.all([
+    env.DB.prepare(`
+      SELECT
+        COUNT(*) AS total_accounts,
+        COUNT(DISTINCT COALESCE(NULLIF(platform, ''), 'Custom')) AS platforms,
+        SUM(CASE WHEN status != 'Inactive' AND (
+          expires_at IS NULL OR date(expires_at) > date('now', '+5 days')
+        ) THEN 1 ELSE 0 END) AS active_accounts,
+        SUM(CASE WHEN status != 'Inactive' AND expires_at IS NOT NULL
+          AND date(expires_at) BETWEEN date('now') AND date('now', '+5 days')
+          THEN 1 ELSE 0 END) AS expiring_soon,
+        SUM(CASE WHEN status = 'Inactive' THEN 1 ELSE 0 END) AS inactive_accounts,
+        SUM(CASE WHEN status != 'Inactive' AND expires_at IS NOT NULL
+          AND date(expires_at) < date('now') THEN 1 ELSE 0 END) AS expired_accounts
+      FROM accounts
+    `).first(),
+    env.DB.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM generated_email_addresses WHERE user_id = ?) AS generated_emails,
+        (SELECT COUNT(*) FROM generated_email_addresses WHERE user_id = ? AND status = 'active') AS active_emails,
+        (SELECT COUNT(*) FROM received_emails WHERE user_id = ?) AS received_messages,
+        (SELECT COUNT(*) FROM received_emails WHERE user_id = ? AND read_at IS NULL) AS unread_messages,
+        (SELECT COALESCE(SUM(raw_size_bytes), 0) FROM received_emails WHERE user_id = ?) AS email_storage_bytes
+    `).bind(user.id, user.id, user.id, user.id, user.id).first(),
+    env.DB.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM notes WHERE user_id = ?) AS notes,
+        (SELECT COUNT(*) FROM authenticator_entries WHERE user_id = ?) AS authenticator_accounts,
+        (SELECT COUNT(*) FROM vault_secrets WHERE user_id = ?) AS vault_items,
+        (SELECT COUNT(*) FROM plugins WHERE user_id = ?) AS plugins,
+        (SELECT COUNT(*) FROM plugins WHERE user_id = ? AND enabled = 1) AS enabled_plugins,
+        (SELECT COUNT(*) FROM activity_logs WHERE user_id = ?) AS activity_events,
+        (SELECT COUNT(*) FROM chat_conversations WHERE user_id = ?) AS saved_conversations
+    `).bind(user.id, user.id, user.id, user.id, user.id, user.id, user.id).first(),
+  ])
+  const numeric = (value) => Number(value || 0)
+  return json({
+    data: {
+      accounts: {
+        total: numeric(accounts.total_accounts),
+        platforms: numeric(accounts.platforms),
+        active: numeric(accounts.active_accounts),
+        expiringSoon: numeric(accounts.expiring_soon),
+        inactive: numeric(accounts.inactive_accounts),
+        expired: numeric(accounts.expired_accounts),
+      },
+      email: {
+        generatedAddresses: numeric(email.generated_emails),
+        activeAddresses: numeric(email.active_emails),
+        receivedMessages: numeric(email.received_messages),
+        unreadMessages: numeric(email.unread_messages),
+        storageBytes: numeric(email.email_storage_bytes),
+      },
+      notes: numeric(other.notes),
+      authenticatorAccounts: numeric(other.authenticator_accounts),
+      vaultItems: numeric(other.vault_items),
+      plugins: {
+        configured: numeric(other.plugins),
+        enabled: numeric(other.enabled_plugins),
+      },
+      activityEvents: numeric(other.activity_events),
+      savedConversations: numeric(other.saved_conversations),
+      generatedAt: new Date().toISOString(),
+    },
+  }, 200, request, env)
+}
+
+function chatMemoryExcerpt(content, query) {
+  const text = String(content || '').replace(/\s+/g, ' ').trim()
+  const matchAt = text.toLowerCase().indexOf(query.toLowerCase())
+  const start = Math.max(0, matchAt - 180)
+  const excerpt = text.slice(start, start + 700)
+  return `${start ? '...' : ''}${excerpt}${start + excerpt.length < text.length ? '...' : ''}`
+}
+
+async function searchChatMemory(request, env, user) {
+  const url = new URL(request.url)
+  const query = cleanText(url.searchParams.get('q'), 'Memory search', 200)
+  if (!query || query.length < 2) throw new ClientError('Memory search must contain at least 2 characters')
+  const excludeConversationId = cleanText(
+    url.searchParams.get('excludeConversationId'),
+    'Conversation ID',
+    100,
+  )
+  const escaped = query.toLowerCase().replace(/[\\%_]/g, '\\$&')
+  const pattern = `%${escaped}%`
+  const { results } = await env.DB.prepare(`
+    SELECT messages.id, messages.conversation_id, conversations.title,
+      messages.role, messages.content, messages.created_at
+    FROM chat_messages AS messages
+    INNER JOIN chat_conversations AS conversations
+      ON conversations.id = messages.conversation_id
+    WHERE conversations.user_id = ?
+      AND (? = '' OR conversations.id != ?)
+      AND (
+        LOWER(conversations.title) LIKE ? ESCAPE '\\'
+        OR LOWER(messages.content) LIKE ? ESCAPE '\\'
+      )
+    ORDER BY messages.created_at DESC, messages.id DESC
+    LIMIT 16
+  `).bind(
+    user.id,
+    excludeConversationId,
+    excludeConversationId,
+    pattern,
+    pattern,
+  ).all()
+  const data = (results || []).map((result) => ({
+    messageId: result.id,
+    conversationId: result.conversation_id,
+    conversationTitle: result.title,
+    role: result.role,
+    excerpt: chatMemoryExcerpt(result.content, query),
+    createdAt: result.created_at,
+  }))
+  return json({ data, count: data.length, query }, 200, request, env)
 }
 
 async function createConversation(request, env, user) {
@@ -1679,6 +2031,367 @@ async function deleteConversation(request, env, user, id) {
   return new Response(null, { status: 204, headers: corsHeaders(request, env) })
 }
 
+async function presentNote(note, env) {
+  return {
+    id: note.id,
+    title: await decryptCredential(note.title_ciphertext, note.title_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+    content: await decryptCredential(note.content_ciphertext, note.content_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+    createdAt: note.created_at,
+    updatedAt: note.updated_at,
+  }
+}
+
+async function getNoteRecord(env, userId, id) {
+  return env.DB.prepare(`
+    SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, created_at, updated_at
+    FROM notes
+    WHERE id = ? AND user_id = ?
+  `).bind(id, userId).first()
+}
+
+async function listNotes(request, env, user) {
+  const { results } = await env.DB.prepare(`
+    SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, created_at, updated_at
+    FROM notes
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 500
+  `).bind(user.id).all()
+  const notes = await Promise.all((results || []).map((note) => presentNote(note, env)))
+  return json({ data: notes, count: notes.length }, 200, request, env)
+}
+
+async function createNote(request, env, user) {
+  const body = await readJson(request)
+  const title = cleanText(body.title, 'Title', 200) || 'Untitled note'
+  const content = cleanText(body.content, 'Content', 12000)
+  const id = crypto.randomUUID()
+  const [encryptedTitle, encryptedContent] = await Promise.all([
+    encryptPassword(title, env.CREDENTIALS_ENCRYPTION_KEY),
+    encryptPassword(content, env.CREDENTIALS_ENCRYPTION_KEY),
+  ])
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'note.created',
+    description: 'Note created',
+    metadata: { noteId: id },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO notes (id, user_id, title_ciphertext, title_iv, content_ciphertext, content_iv)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).bind(id, user.id, encryptedTitle.ciphertext, encryptedTitle.iv, encryptedContent.ciphertext, encryptedContent.iv),
+    audit,
+  ])
+  return json({ data: await presentNote(await getNoteRecord(env, user.id, id), env) }, 201, request, env)
+}
+
+async function updateNote(request, env, user, id) {
+  const existing = await getNoteRecord(env, user.id, id)
+  if (!existing) return json({ error: 'Note not found' }, 404, request, env)
+
+  const body = await readJson(request)
+  if (body.title === undefined && body.content === undefined) throw new ClientError('Title or content is required')
+  const current = await presentNote(existing, env)
+  const title = body.title === undefined ? current.title : cleanText(body.title, 'Title', 200) || 'Untitled note'
+  const content = body.content === undefined ? current.content : cleanText(body.content, 'Content', 12000)
+  const [encryptedTitle, encryptedContent] = await Promise.all([
+    encryptPassword(title, env.CREDENTIALS_ENCRYPTION_KEY),
+    encryptPassword(content, env.CREDENTIALS_ENCRYPTION_KEY),
+  ])
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'note.updated',
+    description: 'Note updated',
+    metadata: { noteId: id },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE notes
+      SET title_ciphertext = ?, title_iv = ?, content_ciphertext = ?, content_iv = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).bind(encryptedTitle.ciphertext, encryptedTitle.iv, encryptedContent.ciphertext, encryptedContent.iv, id, user.id),
+    audit,
+  ])
+  return json({ data: await presentNote(await getNoteRecord(env, user.id, id), env) }, 200, request, env)
+}
+
+async function deleteNote(request, env, user, id) {
+  const existing = await getNoteRecord(env, user.id, id)
+  if (!existing) return json({ error: 'Note not found' }, 404, request, env)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'note.deleted',
+    description: 'Note deleted',
+    metadata: { noteId: id },
+  })
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM notes WHERE id = ? AND user_id = ?').bind(id, user.id),
+    audit,
+  ])
+  return new Response(null, { status: 204, headers: corsHeaders(request, env) })
+}
+
+async function getVaultSecretRecord(env, userId, id) {
+  return env.DB.prepare(`
+    SELECT id, name_ciphertext, name_iv, value_ciphertext, value_iv,
+      notes_ciphertext, notes_iv, secret_type, created_at, updated_at
+    FROM vault_secrets
+    WHERE id = ? AND user_id = ?
+  `).bind(id, userId).first()
+}
+
+async function presentVaultSecret(secret, env, includeValue = false) {
+  const name = await decryptCredential(secret.name_ciphertext, secret.name_iv, env.CREDENTIALS_ENCRYPTION_KEY)
+  return {
+    id: secret.id,
+    name,
+    type: secret.secret_type,
+    hasValue: Boolean(secret.value_ciphertext),
+    createdAt: secret.created_at,
+    updatedAt: secret.updated_at,
+    ...(includeValue ? {
+      value: await decryptCredential(secret.value_ciphertext, secret.value_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+      notes: await decryptCredential(secret.notes_ciphertext, secret.notes_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+    } : {}),
+  }
+}
+
+async function listVaultSecrets(request, env, user) {
+  const { results } = await env.DB.prepare(`
+    SELECT id, name_ciphertext, name_iv, value_ciphertext, value_iv,
+      notes_ciphertext, notes_iv, secret_type, created_at, updated_at
+    FROM vault_secrets
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, id DESC
+    LIMIT 500
+  `).bind(user.id).all()
+  const secrets = await Promise.all((results || []).map((secret) => presentVaultSecret(secret, env)))
+  return json({ data: secrets, count: secrets.length }, 200, request, env)
+}
+
+async function getVaultSecret(request, env, user, id) {
+  const secret = await getVaultSecretRecord(env, user.id, id)
+  if (!secret) return json({ error: 'Vault item not found' }, 404, request, env)
+  return json({ data: await presentVaultSecret(secret, env, true) }, 200, request, env)
+}
+
+async function createVaultSecret(request, env, user) {
+  const body = await readJson(request, maximumVaultBodyBytes)
+  const name = cleanText(body.name, 'Name', 200)
+  const value = secretText(body.value, 'Secret value', 12000)
+  const notes = cleanText(body.notes, 'Notes', 2000)
+  const type = cleanText(body.type, 'Type', 32, 'other') || 'other'
+  if (!name) throw new ClientError('Name is required')
+  if (!vaultSecretTypes.has(type)) throw new ClientError('Secret type is invalid')
+  const id = crypto.randomUUID()
+  const [encryptedName, encryptedValue, encryptedNotes] = await Promise.all([
+    encryptPassword(name, env.CREDENTIALS_ENCRYPTION_KEY),
+    encryptPassword(value, env.CREDENTIALS_ENCRYPTION_KEY),
+    encryptPassword(notes, env.CREDENTIALS_ENCRYPTION_KEY),
+  ])
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'vault.secret.created',
+    description: 'Vault secret created',
+    metadata: { secretId: id, type },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO vault_secrets (
+        id, user_id, name_ciphertext, name_iv, value_ciphertext, value_iv,
+        notes_ciphertext, notes_iv, secret_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id, user.id, encryptedName.ciphertext, encryptedName.iv,
+      encryptedValue.ciphertext, encryptedValue.iv, encryptedNotes.ciphertext,
+      encryptedNotes.iv, type,
+    ),
+    audit,
+  ])
+  return json({ data: await presentVaultSecret(await getVaultSecretRecord(env, user.id, id), env) }, 201, request, env)
+}
+
+async function updateVaultSecret(request, env, user, id) {
+  const existing = await getVaultSecretRecord(env, user.id, id)
+  if (!existing) return json({ error: 'Vault item not found' }, 404, request, env)
+  const body = await readJson(request, maximumVaultBodyBytes)
+  const current = await presentVaultSecret(existing, env, true)
+  const name = body.name === undefined ? current.name : cleanText(body.name, 'Name', 200)
+  const value = body.value === undefined ? current.value : secretText(body.value, 'Secret value', 12000)
+  const notes = body.notes === undefined ? current.notes : cleanText(body.notes, 'Notes', 2000)
+  const type = body.type === undefined ? current.type : cleanText(body.type, 'Type', 32)
+  if (!name) throw new ClientError('Name is required')
+  if (!vaultSecretTypes.has(type)) throw new ClientError('Secret type is invalid')
+  const [encryptedName, encryptedValue, encryptedNotes] = await Promise.all([
+    encryptPassword(name, env.CREDENTIALS_ENCRYPTION_KEY),
+    encryptPassword(value, env.CREDENTIALS_ENCRYPTION_KEY),
+    encryptPassword(notes, env.CREDENTIALS_ENCRYPTION_KEY),
+  ])
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'vault.secret.updated',
+    description: 'Vault secret updated',
+    metadata: { secretId: id, type },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE vault_secrets
+      SET name_ciphertext = ?, name_iv = ?, value_ciphertext = ?, value_iv = ?,
+        notes_ciphertext = ?, notes_iv = ?, secret_type = ?,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).bind(
+      encryptedName.ciphertext, encryptedName.iv, encryptedValue.ciphertext,
+      encryptedValue.iv, encryptedNotes.ciphertext, encryptedNotes.iv, type,
+      id, user.id,
+    ),
+    audit,
+  ])
+  return json({ data: await presentVaultSecret(await getVaultSecretRecord(env, user.id, id), env) }, 200, request, env)
+}
+
+async function deleteVaultSecret(request, env, user, id) {
+  const existing = await getVaultSecretRecord(env, user.id, id)
+  if (!existing) return json({ error: 'Vault item not found' }, 404, request, env)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'vault.secret.deleted',
+    description: 'Vault secret deleted',
+    metadata: { secretId: id },
+  })
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM vault_secrets WHERE id = ? AND user_id = ?').bind(id, user.id),
+    audit,
+  ])
+  return new Response(null, { status: 204, headers: corsHeaders(request, env) })
+}
+
+function validatePluginConfig(platform, value) {
+  const definition = pluginFields[platform]
+  if (!definition) throw new ClientError('Plugin platform is invalid')
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new ClientError('Plugin configuration must be an object')
+  }
+  const unknownField = Object.keys(value).find((field) => !definition.allowed.includes(field))
+  if (unknownField) throw new ClientError(`Plugin configuration field ${unknownField} is invalid`)
+  const config = Object.fromEntries(definition.allowed
+    .filter((field) => value[field] !== undefined)
+    .map((field) => [field, secretText(value[field], field, field === 'accountName' ? 200 : 8000)]))
+  const missingField = definition.required.find((field) => !config[field])
+  if (missingField) throw new ClientError(`${missingField} is required`)
+  return config
+}
+
+async function getPluginRecord(env, userId, id) {
+  return env.DB.prepare(`
+    SELECT id, platform, config_ciphertext, config_iv, enabled, created_at, updated_at
+    FROM plugins
+    WHERE id = ? AND user_id = ?
+  `).bind(id, userId).first()
+}
+
+async function presentPlugin(plugin, env, includeConfig = false) {
+  const decrypted = await decryptCredential(plugin.config_ciphertext, plugin.config_iv, env.CREDENTIALS_ENCRYPTION_KEY)
+  const config = JSON.parse(decrypted)
+  return {
+    id: plugin.id,
+    platform: plugin.platform,
+    accountName: config.accountName || `${plugin.platform.replaceAll('_', ' ')} account`,
+    enabled: Boolean(plugin.enabled),
+    configuredFields: Object.keys(config).filter((field) => field !== 'accountName' && Boolean(config[field])),
+    createdAt: plugin.created_at,
+    updatedAt: plugin.updated_at,
+    ...(includeConfig ? { config } : {}),
+  }
+}
+
+async function listPlugins(request, env, user) {
+  const { results } = await env.DB.prepare(`
+    SELECT id, platform, config_ciphertext, config_iv, enabled, created_at, updated_at
+    FROM plugins
+    WHERE user_id = ?
+    ORDER BY updated_at DESC, id DESC
+  `).bind(user.id).all()
+  const plugins = await Promise.all((results || []).map((plugin) => presentPlugin(plugin, env)))
+  return json({ data: plugins, count: plugins.length }, 200, request, env)
+}
+
+async function getPlugin(request, env, user, id) {
+  const plugin = await getPluginRecord(env, user.id, id)
+  if (!plugin) return json({ error: 'Plugin not found' }, 404, request, env)
+  return json({ data: await presentPlugin(plugin, env, true) }, 200, request, env)
+}
+
+async function createPlugin(request, env, user) {
+  const body = await readJson(request, maximumVaultBodyBytes)
+  const platform = cleanText(body.platform, 'Platform', 32)
+  const config = validatePluginConfig(platform, body.config)
+  const encryptedConfig = await encryptPassword(JSON.stringify(config), env.CREDENTIALS_ENCRYPTION_KEY)
+  const id = crypto.randomUUID()
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'plugin.created',
+    description: 'Plugin configured',
+    metadata: { pluginId: id, platform },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      INSERT INTO plugins (id, user_id, platform, config_ciphertext, config_iv, enabled)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `).bind(id, user.id, platform, encryptedConfig.ciphertext, encryptedConfig.iv),
+    audit,
+  ])
+  return json({ data: await presentPlugin(await getPluginRecord(env, user.id, id), env) }, 201, request, env)
+}
+
+async function updatePlugin(request, env, user, id) {
+  const existing = await getPluginRecord(env, user.id, id)
+  if (!existing) return json({ error: 'Plugin not found' }, 404, request, env)
+  const body = await readJson(request, maximumVaultBodyBytes)
+  if (body.config === undefined && body.enabled === undefined) {
+    throw new ClientError('Plugin configuration or enabled status is required')
+  }
+  if (body.enabled !== undefined && typeof body.enabled !== 'boolean') {
+    throw new ClientError('Enabled must be true or false')
+  }
+  const current = await presentPlugin(existing, env, true)
+  const config = body.config === undefined ? current.config : validatePluginConfig(existing.platform, body.config)
+  const enabled = body.enabled === undefined ? current.enabled : body.enabled
+  const encryptedConfig = await encryptPassword(JSON.stringify(config), env.CREDENTIALS_ENCRYPTION_KEY)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'plugin.updated',
+    description: 'Plugin configuration updated',
+    metadata: { pluginId: id, platform: existing.platform, enabled },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE plugins
+      SET config_ciphertext = ?, config_iv = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).bind(encryptedConfig.ciphertext, encryptedConfig.iv, enabled ? 1 : 0, id, user.id),
+    audit,
+  ])
+  return json({ data: await presentPlugin(await getPluginRecord(env, user.id, id), env) }, 200, request, env)
+}
+
+async function deletePlugin(request, env, user, id) {
+  const existing = await getPluginRecord(env, user.id, id)
+  if (!existing) return json({ error: 'Plugin not found' }, 404, request, env)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'plugin.deleted',
+    description: 'Plugin removed',
+    metadata: { pluginId: id, platform: existing.platform },
+  })
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM plugins WHERE id = ? AND user_id = ?').bind(id, user.id),
+    audit,
+  ])
+  return new Response(null, { status: 204, headers: corsHeaders(request, env) })
+}
+
 async function listConversationMessages(request, env, user, id) {
   const conversation = await env.DB.prepare(`
     SELECT id FROM chat_conversations WHERE id = ? AND user_id = ?
@@ -1686,7 +2399,7 @@ async function listConversationMessages(request, env, user, id) {
   if (!conversation) return json({ error: 'Conversation not found' }, 404, request, env)
 
   const { results } = await env.DB.prepare(`
-    SELECT id, conversation_id, role, content, created_at
+    SELECT id, conversation_id, role, content, provider_name, model, created_at
     FROM chat_messages
     WHERE conversation_id = ?
     ORDER BY created_at ASC, id ASC
@@ -1698,6 +2411,8 @@ async function saveChatExchange(request, env, user) {
   const body = await readJson(request, maximumChatBodyBytes)
   const message = cleanText(body.message, 'Message', 20000)
   const assistantContent = cleanText(body.assistantContent, 'Assistant response', 50000)
+  const providerName = cleanText(body.providerName, 'Provider name', 100)
+  const model = cleanText(body.model, 'Model', 200)
   if (!message) throw new ClientError('Message is required')
   if (!assistantContent) throw new ClientError('Assistant response is required')
 
@@ -1734,9 +2449,10 @@ async function saveChatExchange(request, env, user) {
       VALUES (?, ?, 'user', ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
     `).bind(userMessageId, conversationId, message),
     env.DB.prepare(`
-      INSERT INTO chat_messages (id, conversation_id, role, content, created_at)
-      VALUES (?, ?, 'assistant', ?, strftime('%Y-%m-%d %H:%M:%f', 'now', '+0.001 seconds'))
-    `).bind(assistantMessageId, conversationId, assistantContent),
+      INSERT INTO chat_messages (
+        id, conversation_id, role, content, provider_name, model, created_at
+      ) VALUES (?, ?, 'assistant', ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now', '+0.001 seconds'))
+    `).bind(assistantMessageId, conversationId, assistantContent, providerName, model),
   )
   await env.DB.batch(statements)
 
@@ -1745,10 +2461,10 @@ async function saveChatExchange(request, env, user) {
       SELECT id, title, created_at, updated_at FROM chat_conversations WHERE id = ?
     `).bind(conversationId).first(),
     env.DB.prepare(`
-      SELECT id, conversation_id, role, content, created_at FROM chat_messages WHERE id = ?
+      SELECT id, conversation_id, role, content, provider_name, model, created_at FROM chat_messages WHERE id = ?
     `).bind(userMessageId).first(),
     env.DB.prepare(`
-      SELECT id, conversation_id, role, content, created_at FROM chat_messages WHERE id = ?
+      SELECT id, conversation_id, role, content, provider_name, model, created_at FROM chat_messages WHERE id = ?
     `).bind(assistantMessageId).first(),
   ])
   return json({
@@ -1779,8 +2495,8 @@ async function createChatCompletion(request, env, user) {
   }
 
   const connection = await env.DB.prepare(`
-    SELECT api_mode, base_url, api_key_ciphertext, api_key_iv, model
-    FROM ai_connections WHERE user_id = ? AND status = 'verified'
+    SELECT provider_name, api_mode, base_url, api_key_ciphertext, api_key_iv, model
+    FROM ai_connections WHERE user_id = ? AND status = 'verified' AND is_active = 1
   `).bind(user.id).first()
   if (!connection) return json({ error: 'AI provider is not configured' }, 409, request, env)
 
@@ -1872,9 +2588,10 @@ async function createChatCompletion(request, env, user) {
       VALUES (?, ?, 'user', ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
     `).bind(userMessageId, conversationId, message),
     env.DB.prepare(`
-      INSERT INTO chat_messages (id, conversation_id, role, content, created_at)
-      VALUES (?, ?, 'assistant', ?, strftime('%Y-%m-%d %H:%M:%f', 'now', '+0.001 seconds'))
-    `).bind(assistantMessageId, conversationId, assistantContent),
+      INSERT INTO chat_messages (
+        id, conversation_id, role, content, provider_name, model, created_at
+      ) VALUES (?, ?, 'assistant', ?, ?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now', '+0.001 seconds'))
+    `).bind(assistantMessageId, conversationId, assistantContent, connection.provider_name, connection.model),
   )
   await env.DB.batch(statements)
 
@@ -1882,7 +2599,7 @@ async function createChatCompletion(request, env, user) {
     SELECT id, title, created_at, updated_at FROM chat_conversations WHERE id = ?
   `).bind(conversationId).first()
   const assistant = await env.DB.prepare(`
-    SELECT id, conversation_id, role, content, created_at FROM chat_messages WHERE id = ?
+    SELECT id, conversation_id, role, content, provider_name, model, created_at FROM chat_messages WHERE id = ?
   `).bind(assistantMessageId).first()
   return json({
     data: {
@@ -1919,19 +2636,74 @@ function presentBackupAccount(account) {
   }
 }
 
-async function exportBackup(request, env, url) {
+async function exportBackup(request, env, url, user) {
   await syncAccountStatuses(env)
   const format = (url.searchParams.get('format') || 'json').toLowerCase()
   if (format !== 'json' && format !== 'csv') {
     return json({ error: 'Format must be json or csv' }, 400, request, env)
   }
-  const { results } = await env.DB.prepare(
-    `SELECT ${publicAccountFields} FROM accounts ORDER BY created_at DESC`,
-  ).all()
+  const accountFields = format === 'json'
+    ? `${publicAccountFields}, password_ciphertext, password_iv`
+    : publicAccountFields
+  const accountResult = await env.DB.prepare(`
+    SELECT ${accountFields} FROM accounts ORDER BY created_at DESC
+  `).all()
   const filename = `vault-backup.${format}`
-  const backupAccounts = results.map(presentBackupAccount)
+  const backupAccounts = (accountResult.results || []).map(presentBackupAccount)
   if (format === 'json') {
-    return json({ version: 1, exportedAt: new Date().toISOString(), accounts: backupAccounts }, 200, request, env, {
+    const [vaultResult, noteResult, authenticatorResult] = await Promise.all([
+      env.DB.prepare(`
+        SELECT id, name_ciphertext, name_iv, value_ciphertext, value_iv,
+          notes_ciphertext, notes_iv, secret_type, created_at, updated_at
+        FROM vault_secrets WHERE user_id = ? ORDER BY created_at DESC
+      `).bind(user.id).all(),
+      env.DB.prepare(`
+        SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, created_at, updated_at
+        FROM notes WHERE user_id = ? ORDER BY created_at DESC
+      `).bind(user.id).all(),
+      env.DB.prepare(`
+        SELECT issuer, account_name, secret_ciphertext, secret_iv, algorithm, digits, period, created_at, updated_at
+        FROM authenticator_entries WHERE user_id = ? ORDER BY created_at DESC
+      `).bind(user.id).all(),
+    ])
+    const [accountsWithPasswords, vaultSecrets, notes, authenticators] = await Promise.all([
+      Promise.all((accountResult.results || []).map(async (account) => ({
+        ...presentBackupAccount(account),
+        password: await decryptCredential(account.password_ciphertext, account.password_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+      }))),
+      Promise.all((vaultResult.results || []).map((secret) => presentVaultSecret(secret, env, true))),
+      Promise.all((noteResult.results || []).map((note) => presentNote(note, env))),
+      Promise.all((authenticatorResult.results || []).map(async (entry) => ({
+        issuer: entry.issuer,
+        accountName: entry.account_name,
+        secret: await decryptCredential(entry.secret_ciphertext, entry.secret_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+        algorithm: entry.algorithm,
+        digits: entry.digits,
+        period: entry.period,
+        createdAt: entry.created_at,
+        updatedAt: entry.updated_at,
+      }))),
+    ])
+    await writeAudit(request, env, {
+      userId: user.id,
+      eventType: 'backup.exported',
+      description: 'Encrypted backup data exported',
+      metadata: {
+        accounts: backupAccounts.length,
+        vaultSecrets: vaultSecrets.length,
+        notes: notes.length,
+        authenticators: authenticators.length,
+      },
+    })
+    return json({
+      format: 'vault-backup',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      accounts: accountsWithPasswords,
+      vaultSecrets,
+      notes,
+      authenticators,
+    }, 200, request, env, {
       'content-disposition': `attachment; filename="${filename}"`,
     })
   }
@@ -1981,7 +2753,7 @@ function normalizeForwardingAddress(value) {
   return address
 }
 
-async function emailRoutingRequest(env, zoneId, path = '', options = {}) {
+async function emailRoutingRequest(env, zoneId, path = '', options = {}, allowNotFound = false) {
   if (!env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) {
     throw new ClientError('Email routing is not configured', 503)
   }
@@ -1998,12 +2770,42 @@ async function emailRoutingRequest(env, zoneId, path = '', options = {}) {
     },
   )
   const result = await response.json().catch(() => null)
+  if (allowNotFound && response.status === 404) return null
   if (!response.ok || !result?.success) {
     const detail = result?.errors?.[0]?.message
     console.error('Email Routing API request failed', response.status, detail || 'Unknown error')
     throw new ClientError('Email routing is temporarily unavailable', 503)
   }
   return result.result
+}
+
+function emailRoutingRuleIsReady(rule, fullAddress, workerName) {
+  return Boolean(
+    rule?.id
+      && rule.enabled === true
+      && rule.matchers?.some((matcher) =>
+        matcher.type === 'literal'
+        && matcher.field === 'to'
+        && String(matcher.value || '').toLowerCase() === fullAddress.toLowerCase())
+      && rule.actions?.some((action) =>
+        action.type === 'worker'
+        && action.value?.includes(workerName)),
+  )
+}
+
+async function waitForEmailRoutingRule(env, zoneId, ruleId, fullAddress) {
+  for (const delay of emailRoutingSyncDelaysMilliseconds) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+    const rule = await emailRoutingRequest(
+      env,
+      zoneId,
+      `/${encodeURIComponent(ruleId)}`,
+      {},
+      true,
+    )
+    if (emailRoutingRuleIsReady(rule, fullAddress, env.EMAIL_ROUTING_WORKER)) return rule
+  }
+  throw new ClientError('Email routing could not be synchronized. Try generating the address again.', 503)
 }
 
 async function createEmailRoutingRule(env, hostname, fullAddress) {
@@ -2022,7 +2824,18 @@ async function createEmailRoutingRule(env, hostname, fullAddress) {
     }),
   })
   if (!rule?.id) throw new ClientError('Email routing did not return a rule identifier', 503)
-  return { ruleId: String(rule.id), zoneId }
+  const ruleId = String(rule.id)
+  try {
+    await waitForEmailRoutingRule(env, zoneId, ruleId, fullAddress)
+    return { ruleId, zoneId }
+  } catch (error) {
+    try {
+      await deleteEmailRoutingRule(env, zoneId, ruleId)
+    } catch (cleanupError) {
+      console.error('Failed to remove unsynchronized Email Routing rule', cleanupError)
+    }
+    throw error
+  }
 }
 
 async function deleteEmailRoutingRule(env, zoneId, ruleId) {
@@ -2049,10 +2862,101 @@ async function deleteEmailRoutingRule(env, zoneId, ruleId) {
   throw new ClientError('Email routing is temporarily unavailable', 503)
 }
 
+async function listEmailRoutingRules(env, zoneId) {
+  if (!env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) {
+    throw new ClientError('Email routing is not configured', 503)
+  }
+
+  const rules = []
+  let page = 1
+  let totalPages = 1
+  do {
+    const response = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${zoneId}/email/routing/rules?page=${page}&per_page=100`,
+      { headers: { authorization: `Bearer ${env.CLOUDFLARE_EMAIL_ROUTING_TOKEN}` } },
+    )
+    const result = await response.json().catch(() => null)
+    if (!response.ok || !result?.success || !Array.isArray(result.result)) {
+      const detail = result?.errors?.[0]?.message
+      console.error('Email Routing rule listing failed', response.status, detail || 'Unknown error')
+      throw new ClientError('Email routing is temporarily unavailable', 503)
+    }
+    rules.push(...result.result)
+    totalPages = Math.max(1, Number(result.result_info?.total_pages) || 1)
+    page += 1
+  } while (page <= totalPages)
+
+  return rules
+}
+
+async function reconcileEmailRoutingRules(env, userId = null) {
+  const query = `
+    SELECT id, user_id, full_address, routing_rule_id, routing_zone_id
+    FROM generated_email_addresses
+    WHERE routing_rule_id IS NOT NULL AND routing_zone_id IS NOT NULL
+      ${userId ? 'AND user_id = ?' : ''}
+  `
+  const { results } = userId
+    ? await env.DB.prepare(query).bind(userId).all()
+    : await env.DB.prepare(query).all()
+  if (!results?.length) return []
+
+  const rulesByZone = new Map()
+  for (const zoneId of new Set(results.map((address) => address.routing_zone_id))) {
+    const rules = await listEmailRoutingRules(env, zoneId)
+    rulesByZone.set(zoneId, new Set(rules.map((rule) => String(rule.id))))
+  }
+
+  const missing = results.filter((address) =>
+    !rulesByZone.get(address.routing_zone_id)?.has(String(address.routing_rule_id)))
+  if (!missing.length) return []
+
+  const missingByUser = new Map()
+  for (const address of missing) {
+    const addresses = missingByUser.get(address.user_id) || []
+    addresses.push(address)
+    missingByUser.set(address.user_id, addresses)
+  }
+  for (const [ownerId, addresses] of missingByUser) {
+    const ids = addresses.map((address) => address.id)
+    const placeholders = ids.map(() => '?').join(', ')
+    const remove = env.DB.prepare(`
+      DELETE FROM generated_email_addresses
+      WHERE user_id = ? AND id IN (${placeholders})
+    `).bind(ownerId, ...ids)
+    const audit = env.DB.prepare(`
+      INSERT INTO activity_logs (
+        id, user_id, event_type, description, severity, metadata, client_identifier_hash
+      ) VALUES (?, ?, 'email.addresses.reconciled', ?, 'info', ?, ?)
+    `).bind(
+      crypto.randomUUID(),
+      ownerId,
+      `${ids.length} email address${ids.length === 1 ? '' : 'es'} removed after Cloudflare synchronization`,
+      JSON.stringify({
+        addressIds: ids,
+        addresses: addresses.map((address) => address.full_address),
+        reason: 'cloudflare_rule_missing',
+      }),
+      await digestClientIdentifier(`email-routing-reconciliation|${ownerId}`),
+    )
+    await env.DB.batch([remove, audit])
+  }
+
+  return missing.map((address) => address.id)
+}
+
+async function digestClientIdentifier(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+  return toBase64Url(new Uint8Array(digest))
+}
+
 export const emailRouting = {
   parseZones: parseEmailRoutingZones,
+  ruleIsReady: emailRoutingRuleIsReady,
   createRule: createEmailRoutingRule,
   deleteRule: deleteEmailRoutingRule,
+  listRules: listEmailRoutingRules,
+  reconcile: reconcileEmailRoutingRules,
 }
 
 async function listVerifiedForwardingDestinations(env) {
@@ -2067,6 +2971,7 @@ async function listVerifiedForwardingDestinations(env) {
   if (!response.ok) throw new ClientError('Forwarding destinations are temporarily unavailable', 503)
 
   const result = await response.json()
+  if (!result?.success) throw new ClientError('Forwarding destinations are temporarily unavailable', 503)
   const destinations = (result.result || [])
     .filter((item) => item.verified)
     .map((item) => ({
@@ -2076,6 +2981,51 @@ async function listVerifiedForwardingDestinations(env) {
     }))
     .filter((item) => item.address)
   return { available: true, destinations }
+}
+
+async function createForwardingDestination(request, env, user) {
+  if (!env.CLOUDFLARE_ACCOUNT_ID || !env.CLOUDFLARE_EMAIL_ROUTING_TOKEN) {
+    throw new ClientError('Forwarding is not configured', 503)
+  }
+  const body = await readJson(request)
+  const address = normalizeForwardingAddress(body.email)
+  if (!address) throw new ClientError('Enter a valid forwarding email address')
+
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/email/routing/addresses`,
+    {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${env.CLOUDFLARE_EMAIL_ROUTING_TOKEN}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ email: address }),
+    },
+  )
+  const result = await response.json().catch(() => null)
+  if (!response.ok || !result?.success || !result.result?.id) {
+    const detail = result?.errors?.[0]?.message
+    console.error('Forwarding destination creation failed', response.status, detail || 'Unknown error')
+    throw new ClientError(
+      response.status === 409 ? 'This forwarding destination already exists' : 'Unable to add forwarding destination',
+      response.status === 409 ? 409 : 503,
+    )
+  }
+
+  await writeAudit(request, env, {
+    userId: user.id,
+    eventType: 'email.forwarding_destination.created',
+    description: 'Email forwarding destination added',
+    metadata: { address },
+  })
+  return json({
+    data: {
+      id: String(result.result.id),
+      address,
+      verified: Boolean(result.result.verified),
+    },
+    verificationRequired: !result.result.verified,
+  }, 201, request, env)
 }
 
 async function validateForwardingSettings(env, deliveryMode, destinationId, forwardTo) {
@@ -2180,6 +3130,11 @@ async function listEmailDomains(request, env) {
 }
 
 async function listEmailAddresses(request, env, user) {
+  try {
+    await reconcileEmailRoutingRules(env, user.id)
+  } catch (error) {
+    console.error('Email Routing reconciliation failed while listing addresses', error)
+  }
   const { results } = await env.DB.prepare(`
     SELECT
       a.id, a.local_part, a.full_address, a.domain_id, a.generation_mode,
@@ -2281,7 +3236,6 @@ async function createEmailAddresses(request, env, user) {
           metadata: { addressId: id, fullAddress, mode: 'custom', routingRuleId: routing.ruleId },
         })
         await env.DB.batch([insert, audit])
-        inserted = true
       } catch (error) {
         try {
           await deleteEmailRoutingRule(env, routing.zoneId, routing.ruleId)
@@ -2294,15 +3248,13 @@ async function createEmailAddresses(request, env, user) {
         throw error
       }
 
-      if (inserted) {
-        const row = await env.DB.prepare(`
-          SELECT a.*, d.hostname, 0 AS message_count, 0 AS unread_count
-          FROM generated_email_addresses a
-          LEFT JOIN email_domains d ON d.id = a.domain_id
-          WHERE a.id = ?
-        `).bind(id).first()
-        if (row) created.push(presentEmailAddress(row))
-      }
+      const row = await env.DB.prepare(`
+        SELECT a.*, d.hostname, 0 AS message_count, 0 AS unread_count
+        FROM generated_email_addresses a
+        LEFT JOIN email_domains d ON d.id = a.domain_id
+        WHERE a.id = ?
+      `).bind(id).first()
+      if (row) created.push(presentEmailAddress(row))
     } else {
       // random_words with collision retry
       for (let attempt = 0; attempt < maximumCollisionRetries; attempt += 1) {
@@ -2361,7 +3313,11 @@ async function createEmailAddresses(request, env, user) {
     }
   }
 
-  return json({ data: created, count: created.length }, 201, request, env)
+  return json({
+    data: created,
+    count: created.length,
+    provisioning: { status: 'ready', provider: 'cloudflare-email-routing' },
+  }, 201, request, env)
 }
 
 async function deleteEmailAddress(request, env, user, addressId) {
@@ -2607,7 +3563,10 @@ async function markEmailMessageRead(request, env, user, messageId) {
 
 export default {
   async scheduled(_event, env) {
-    await syncAccountStatuses(env)
+    await Promise.all([
+      syncAccountStatuses(env),
+      reconcileEmailRoutingRules(env),
+    ])
   },
 
   async fetch(request, env) {
@@ -2734,9 +3693,25 @@ export default {
         if (request.method === 'PUT') return await updateAiConfig(request, env, authenticatedUser)
         if (request.method === 'DELETE') return await deleteAiConfig(request, env, authenticatedUser)
       }
+      const aiConfigMatch = url.pathname.match(/^\/v1\/ai\/config\/([0-9a-f-]+)$/i)
+      if (aiConfigMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'PUT') return await updateAiConfig(request, env, authenticatedUser, aiConfigMatch[1])
+        if (request.method === 'DELETE') return await deleteAiConfig(request, env, authenticatedUser, aiConfigMatch[1])
+      }
+      const aiActivateMatch = url.pathname.match(/^\/v1\/ai\/config\/([0-9a-f-]+)\/activate$/i)
+      if (aiActivateMatch && request.method === 'POST') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await activateAiConfig(request, env, authenticatedUser, aiActivateMatch[1])
+      }
       if (url.pathname === '/v1/ai/client-config' && request.method === 'GET') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         return await getAiClientConfig(request, env, authenticatedUser)
+      }
+      const aiClientConfigMatch = url.pathname.match(/^\/v1\/ai\/client-config\/([0-9a-f-]+)$/i)
+      if (aiClientConfigMatch && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await getAiClientConfig(request, env, authenticatedUser, aiClientConfigMatch[1])
       }
       if (url.pathname === '/v1/ai/verify' && request.method === 'POST') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
@@ -2747,6 +3722,14 @@ export default {
         if (request.method === 'GET') return await listConversations(request, env, authenticatedUser)
         if (request.method === 'POST') return await createConversation(request, env, authenticatedUser)
       }
+      if (url.pathname === '/v1/chat/memory/search' && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await searchChatMemory(request, env, authenticatedUser)
+      }
+      if (url.pathname === '/v1/dashboard/stats' && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await getDashboardStats(request, env, authenticatedUser)
+      }
       if (url.pathname === '/v1/chat/completions' && request.method === 'POST') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         return await createChatCompletion(request, env, authenticatedUser)
@@ -2755,12 +3738,66 @@ export default {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         return await saveChatExchange(request, env, authenticatedUser)
       }
+      if (url.pathname === '/v1/notes') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') return await listNotes(request, env, authenticatedUser)
+        if (request.method === 'POST') return await createNote(request, env, authenticatedUser)
+      }
+      if (url.pathname === '/v1/vault') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') return await listVaultSecrets(request, env, authenticatedUser)
+        if (request.method === 'POST') return await createVaultSecret(request, env, authenticatedUser)
+      }
+      if (url.pathname === '/v1/plugins') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') return await listPlugins(request, env, authenticatedUser)
+        if (request.method === 'POST') return await createPlugin(request, env, authenticatedUser)
+      }
+      const pluginMatch = url.pathname.match(/^\/v1\/plugins\/([0-9a-f-]+)$/i)
+      if (pluginMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') return await getPlugin(request, env, authenticatedUser, pluginMatch[1])
+        if (request.method === 'PATCH') return await updatePlugin(request, env, authenticatedUser, pluginMatch[1])
+        if (request.method === 'DELETE') return await deletePlugin(request, env, authenticatedUser, pluginMatch[1])
+      }
+      const vaultMatch = url.pathname.match(/^\/v1\/vault\/([0-9a-f-]+)$/i)
+      if (vaultMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'GET') return await getVaultSecret(request, env, authenticatedUser, vaultMatch[1])
+        if (request.method === 'PATCH') return await updateVaultSecret(request, env, authenticatedUser, vaultMatch[1])
+        if (request.method === 'DELETE') return await deleteVaultSecret(request, env, authenticatedUser, vaultMatch[1])
+      }
+      const noteMatch = url.pathname.match(/^\/v1\/notes\/([0-9a-f-]+)$/i)
+      if (noteMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'PATCH') return await updateNote(request, env, authenticatedUser, noteMatch[1])
+        if (request.method === 'DELETE') return await deleteNote(request, env, authenticatedUser, noteMatch[1])
+      }
       if (url.pathname === '/v1/accounts') {
         if (request.method === 'GET') return await listAccounts(request, env, url)
         if (request.method === 'POST') return await createAccount(request, env, authenticatedUser)
-      }
+  }
+
+  if (url.pathname === '/v1/authenticator') {
+    if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+    if (request.method === 'GET') return await listAuthenticatorEntries(request, env, authenticatedUser)
+    if (request.method === 'POST') return await createAuthenticatorEntry(request, env, authenticatedUser)
+  }
+
+  const authenticatorMatch = url.pathname.match(/^\/v1\/authenticator\/([^/]+)$/)
+  if (authenticatorMatch && request.method === 'DELETE') {
+    if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+    return await deleteAuthenticatorEntry(request, env, authenticatedUser, decodeURIComponent(authenticatorMatch[1]))
+  }
       if (url.pathname === '/v1/activity' && request.method === 'GET') return await listActivity(request, env)
-      if (url.pathname === '/v1/backup/export' && request.method === 'GET') return await exportBackup(request, env, url)
+      if (url.pathname === '/v1/activity/email-stats' && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await getEmailActivityStats(request, env, authenticatedUser, url)
+      }
+      if (url.pathname === '/v1/backup/export' && request.method === 'GET') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await exportBackup(request, env, url, authenticatedUser)
+      }
       if (url.pathname === '/v1/settings/profile' && request.method === 'PATCH') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         return await updateProfile(request, env, authenticatedUser)
@@ -2797,6 +3834,10 @@ export default {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
         const result = await listVerifiedForwardingDestinations(env)
         return json({ data: result.destinations, available: result.available }, 200, request, env)
+      }
+      if (url.pathname === '/v1/email/forwarding-destinations' && request.method === 'POST') {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        return await createForwardingDestination(request, env, authenticatedUser)
       }
       if (url.pathname === '/v1/email/messages') {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)

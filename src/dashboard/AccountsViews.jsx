@@ -1,7 +1,18 @@
-import { useDeferredValue, useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import * as OTPAuth from "otpauth";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import {
   Activity,
   AlertTriangle,
+  ArrowRight,
   Bot,
   Bookmark,
   Briefcase,
@@ -12,6 +23,7 @@ import {
   CheckCircle2,
   Copy,
   Clock3,
+  CloudUpload,
   Database,
   FileText,
   Folder,
@@ -23,6 +35,7 @@ import {
   KeyRound,
   Layers3,
   Mail,
+  MessageSquareText,
   LoaderCircle,
   Pencil,
   Plus,
@@ -35,7 +48,8 @@ import {
   X,
 } from "lucide-react";
 import { apiFetch } from "../api";
-import { Field, Modal, PageTitle, SelectField } from "./DashboardUi";
+import { Field, Modal, SelectField } from "./DashboardUi";
+import { getServiceLogoUrl } from "./serviceLogos";
 
 const accountLabels = ["Personal", "Work", "Family", "Shared", "Recovery"];
 const platformsByCategory = {
@@ -114,6 +128,12 @@ const serviceLoginUrls = {
   Maya: "https://maya.ph",
 };
 const accountsPerPage = 8;
+const emailActivityRanges = [
+  { value: "1", label: "Today" },
+  { value: "7", label: "Last 7 days" },
+  { value: "30", label: "Last 30 days" },
+  { value: "90", label: "Last 90 days" },
+];
 
 const emptyAccount = {
   label: "Facebook",
@@ -123,7 +143,6 @@ const emptyAccount = {
   email: "",
   password: "",
   loginUrl: "",
-  accountType: "social",
   category: accountCategories[0],
   plan: accountPlans[0],
   status: "Active",
@@ -155,49 +174,34 @@ export function DashboardOverview({
   apiHealthy,
   user,
   emailAddresses,
+  onNavigate,
+  onAddAccount,
 }) {
   return (
-    <section>
-      <PageTitle
-        eyebrow="Account overview"
-        title={`Welcome back, ${user?.displayName || "Admin"}`}
-        text="Your vault is secure and everything looks good."
-      />
-      <div className="mt-7">
+    <section className="dashboard-overview">
+      <h2 className="sr-only">Welcome back, {user?.displayName || "Admin"}</h2>
+      <div>
         <Metrics accounts={accounts} />
       </div>
-      <div className="mt-8">
-        <div className="mb-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-300/80">
-            Email overview
-          </p>
-          <h2 className="mt-2 text-lg font-semibold">Generated email activity</h2>
-        </div>
-        <EmailMetrics addresses={emailAddresses} />
+      <div className="overview-panel mt-5 p-4 sm:p-5">
+        <h2 className="overview-heading">Email overview</h2>
+        <div className="mt-4"><EmailMetrics addresses={emailAddresses} /></div>
       </div>
-      <div className="panel mt-5">
-        <h2 className="text-lg font-semibold">Vault status</h2>
-        <div className="mt-5 grid gap-4 sm:grid-cols-3">
-          <p className="flex items-center gap-3 text-sm text-slate-400">
-            {apiHealthy ? (
-              <CheckCircle2 className="size-5 text-emerald-300" />
-            ) : (
-              <ShieldAlert className="size-5 text-red-400" />
-            )}
-            {apiHealthy
-              ? "D1 and API connected"
-              : "API connection needs attention"}
-          </p>
-          <p className="flex items-center gap-3 text-sm text-slate-400">
-            <ShieldCheck className="size-5 text-cyan-300" />
-            Encryption active
-          </p>
-          <p className="flex items-center gap-3 text-sm text-slate-400">
-            <Activity className="size-5 text-violet-300" />
-            {activity.length} logged events
-          </p>
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(250px,.8fr)]">
+          <EmailActivityChart />
+          <div className="overview-panel p-5">
+            <h2 className="text-base font-semibold">Vault status</h2>
+            <div className="mt-6 space-y-6">
+              <StatusItem icon={apiHealthy ? CheckCircle2 : ShieldAlert} tone={apiHealthy ? "text-emerald-300" : "text-red-400"} text={apiHealthy ? "D1 and API connected" : "API connection needs attention"} />
+              <StatusItem icon={ShieldCheck} tone="text-cyan-300" text="Encryption active" />
+              <StatusItem icon={Activity} tone="text-violet-300" text={`${activity.length} logged events`} />
+            </div>
+          </div>
         </div>
+        <RecentActivity activity={activity} onViewAll={() => onNavigate("activity")} />
       </div>
+      <QuickAccess onNavigate={onNavigate} onAddAccount={onAddAccount} />
     </section>
   );
 }
@@ -211,6 +215,8 @@ export function AccountsView({
 }) {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [authenticatorEntries, setAuthenticatorEntries] = useState([]);
+  const [authenticatorNow, setAuthenticatorNow] = useState(Date.now());
   const deferredQuery = useDeferredValue(searchQuery.trim().toLowerCase());
   const filteredAccounts = deferredQuery
     ? accounts
@@ -226,26 +232,28 @@ export function AccountsView({
         )
         .map((result) => result.account)
     : accounts;
+  const authenticatorByAccount = useMemo(() => new Map(accounts.map((account) => [
+    account.id,
+    findMatchingAuthenticator(account, authenticatorEntries),
+  ])), [accounts, authenticatorEntries]);
+
+  useEffect(() => {
+    let active = true;
+    apiFetch("/authenticator")
+      .then((response) => response.ok ? response.json() : null)
+      .then((result) => { if (active && result) setAuthenticatorEntries(result.data || []); })
+      .catch(() => {});
+    const timer = window.setInterval(() => setAuthenticatorNow(Date.now()), 1000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   return (
     <>
       <section>
-        <PageTitle
-          eyebrow="Credential vault"
-          title="Accounts"
-          text="Secure social, work, entertainment, and custom online accounts."
-          action={
-            <button
-              type="button"
-              onClick={onAddAccount}
-              className="flex h-11 items-center gap-2 rounded-lg bg-cyan-500 px-5 text-sm font-semibold text-[#021012]"
-            >
-              <Plus className="size-4" />
-              Add account
-            </button>
-          }
-        />
-        <div className="mt-7 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <label className="group flex h-11 w-full max-w-md items-center gap-3 rounded-xl border border-white/10 bg-white/[0.025] px-4 text-slate-500 transition focus-within:border-cyan-300/50 focus-within:bg-cyan-300/[0.03] focus-within:text-cyan-300">
             <Search className="size-4 shrink-0" aria-hidden="true" />
             <input
@@ -267,18 +275,25 @@ export function AccountsView({
               </button>
             )}
           </label>
-          {deferredQuery && (
-            <p className="text-xs text-slate-500" aria-live="polite">
-              {filteredAccounts.length} matching account
-              {filteredAccounts.length === 1 ? "" : "s"}
-            </p>
-          )}
+          <div className="flex items-center justify-between gap-3 sm:justify-end">
+            {deferredQuery && (
+              <p className="text-xs text-slate-500" aria-live="polite">
+                {filteredAccounts.length} matching account
+                {filteredAccounts.length === 1 ? "" : "s"}
+              </p>
+            )}
+            <button type="button" onClick={onAddAccount} className="flex h-11 shrink-0 items-center gap-2 rounded-lg bg-cyan-500 px-5 text-sm font-semibold text-[#021012]">
+              <Plus className="size-4" /> Add account
+            </button>
+          </div>
         </div>
         <div className="panel mt-4 !p-0">
           <AccountsTable
             key={deferredQuery}
             accounts={filteredAccounts}
             loading={loading}
+            authenticatorByAccount={authenticatorByAccount}
+            authenticatorNow={authenticatorNow}
             onDelete={onDelete}
             onView={setSelectedAccount}
             emptyMessage={
@@ -318,7 +333,6 @@ export function AccountModal({ onClose, onCreated }) {
         customPlatform: "",
         label: platform === "Custom" ? "Custom account" : platform,
         loginUrl: serviceLoginUrls[platform] || "",
-        accountType: value.toLowerCase(),
       }));
       return;
     }
@@ -951,13 +965,223 @@ function CopyButton({ value, label, compact = false }) {
       aria-label={copied ? "Copied" : label}
       title={copied ? "Copied" : label}
     >
-      {copied ? (
-        <Check className={compact ? "size-3.5" : "size-4"} />
-      ) : (
-        <Copy className={compact ? "size-3.5" : "size-4"} />
-      )}
+      <span key={copied ? "copied" : "copy"} className="copy-feedback-icon">{copied ? <Check className={compact ? "size-3.5" : "size-4"} /> : <Copy className={compact ? "size-3.5" : "size-4"} />}</span>
     </button>
   );
+}
+
+function StatusItem({ icon: Icon, tone, text }) {
+  return (
+    <p className="flex items-center gap-3 text-sm text-slate-400">
+      <Icon className={`size-5 shrink-0 ${tone}`} />
+      {text}
+    </p>
+  );
+}
+
+function EmailActivityChart() {
+  const [range, setRange] = useState("7");
+  const [series, setSeries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const hasActivity = series.some((day) => day.received || day.generated);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError("");
+
+    apiFetch(`/activity/email-stats?days=${range}`)
+      .then(async (response) => {
+        const result = await response.json();
+        if (response.status === 404) {
+          if (active) setSeries(createEmptyEmailSeries(Number(range)));
+          return;
+        }
+        if (!response.ok) throw new Error(result.error || "Unable to load email activity");
+        if (active) setSeries(result.data || []);
+      })
+      .catch((caught) => {
+        if (active) {
+          setSeries([]);
+          setError(caught.message);
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [range]);
+
+  return (
+    <article className="overview-panel overflow-hidden p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold">Email activity</h2>
+          <p className="mt-1 text-xs text-slate-400">Generated addresses and received emails</p>
+        </div>
+        <SelectField
+          name="email-activity-range"
+          value={range}
+          onChange={(event) => setRange(event.target.value)}
+          options={emailActivityRanges}
+          ariaLabel="Email activity date range"
+          className="min-h-10 min-w-36 bg-white/[0.025] py-2 text-xs"
+        />
+      </div>
+      <div className="mt-5 flex gap-5 text-xs text-slate-400">
+        <span className="flex items-center gap-2"><i className="size-2 rounded-full bg-cyan-300" />Received</span>
+        <span className="flex items-center gap-2"><i className="size-2 rounded-full bg-violet-400" />Generated</span>
+      </div>
+      <div className="mt-3 h-44 sm:h-48" aria-live="polite">
+        {loading && <div className="grid h-full place-items-center text-xs text-slate-500">Loading email activity...</div>}
+        {!loading && error && <div className="grid h-full place-items-center px-4 text-center text-xs text-red-300">{error}</div>}
+        {!loading && !error && (
+          <div className="relative h-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={series} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="received-area" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#22d3c5" stopOpacity={0.25} />
+                    <stop offset="100%" stopColor="#22d3c5" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="generated-area" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.22} />
+                    <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                <XAxis dataKey="day" tickFormatter={(value) => formatChartDate(value, Number(range))} tick={{ fill: "#64748b", fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={24} />
+                <YAxis allowDecimals={false} domain={[0, "dataMax + 1"]} tick={{ fill: "#64748b", fontSize: 10 }} tickLine={false} axisLine={false} width={34} />
+                <Tooltip content={<EmailChartTooltip />} cursor={{ stroke: "rgba(103,232,249,0.22)", strokeDasharray: "4 4" }} />
+                <Area type="monotone" dataKey="received" name="Received" stroke="#22d3c5" strokeWidth={2} fill="url(#received-area)" activeDot={{ r: 4, fill: "#22d3c5", stroke: "#042129", strokeWidth: 2 }} />
+                <Area type="monotone" dataKey="generated" name="Generated" stroke="#8b5cf6" strokeWidth={2} fill="url(#generated-area)" activeDot={{ r: 4, fill: "#8b5cf6", stroke: "#17102c", strokeWidth: 2 }} />
+              </AreaChart>
+            </ResponsiveContainer>
+            {!hasActivity && <p className="pointer-events-none absolute inset-0 grid place-items-center pt-5 text-xs text-slate-500">No email activity in this period</p>}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function createEmptyEmailSeries(days) {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const bucketCount = days === 1 ? 24 : days;
+
+  return Array.from({ length: bucketCount }, (_, index) => {
+    const date = new Date(today);
+    if (days === 1) date.setUTCHours(index);
+    else date.setUTCDate(date.getUTCDate() - (days - 1 - index));
+    return {
+      day: days === 1
+        ? `${date.toISOString().slice(0, 13)}:00:00Z`
+        : date.toISOString().slice(0, 10),
+      received: 0,
+      generated: 0,
+    };
+  });
+}
+
+function EmailChartTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="rounded-lg border border-white/10 bg-[#071219]/95 px-3 py-2 shadow-xl backdrop-blur">
+      <p className="mb-2 text-[0.7rem] font-medium text-slate-300">{formatFullChartDate(label)}</p>
+      {payload.map((item) => <p key={item.dataKey} className="mt-1 flex min-w-32 items-center justify-between gap-5 text-[0.7rem]"><span style={{ color: item.color }}>{item.name}</span><strong className="text-white">{item.value}</strong></p>)}
+    </div>
+  );
+}
+
+function formatChartDate(value, days) {
+  const date = new Date(days === 1 ? value : `${value}T00:00:00Z`);
+  if (days === 1) return date.toLocaleTimeString(undefined, { hour: "numeric" });
+  if (days <= 7) return date.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" });
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+function formatFullChartDate(value) {
+  const date = new Date(value.includes("T") ? value : `${value}T00:00:00Z`);
+  return date.toLocaleString(undefined, {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    ...(value.includes("T") ? { hour: "numeric" } : { timeZone: "UTC" }),
+  });
+}
+
+function parseActivityTimestamp(value) {
+  return new Date(`${value}${value?.endsWith("Z") ? "" : "Z"}`);
+}
+
+function RecentActivity({ activity, onViewAll }) {
+  const recentItems = activity.slice(0, 5);
+
+  return (
+    <article className="overview-panel flex min-h-[300px] flex-col p-5">
+      <h2 className="overview-heading">Activity log</h2>
+      <div className="mt-3 flex-1 divide-y divide-white/[0.055]">
+        {recentItems.map((item) => {
+          const detail = item.metadata?.fullAddress || item.metadata?.email || item.metadata?.platform || item.event_type;
+          return (
+            <div key={item.id} className="flex items-center gap-3 py-3 first:pt-2">
+              <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-cyan-300/[0.065] text-cyan-300">
+                {item.event_type?.startsWith("email.") ? <Mail className="size-4" /> : item.event_type?.startsWith("auth.") ? <ShieldCheck className="size-4" /> : <Activity className="size-4" />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium text-slate-100">{item.description}</p>
+                <p className="mt-1 truncate text-[0.7rem] text-slate-500">{detail}</p>
+              </div>
+              <time className="shrink-0 text-[0.65rem] text-slate-500">{formatRelativeTime(item.created_at)}</time>
+            </div>
+          );
+        })}
+        {!recentItems.length && <p className="py-8 text-center text-xs text-slate-500">No activity recorded yet.</p>}
+      </div>
+      <button type="button" onClick={onViewAll} className="mt-3 flex h-10 items-center justify-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.025] text-xs text-slate-300 transition hover:border-cyan-300/20 hover:text-cyan-300">
+        View full activity log <ArrowRight className="size-4" />
+      </button>
+    </article>
+  );
+}
+
+function QuickAccess({ onNavigate, onAddAccount }) {
+  const actions = [
+    { label: "Add account", detail: "Save new account", icon: Plus, tone: "text-emerald-300 bg-emerald-300/[0.08]", onClick: onAddAccount },
+    { label: "Generate email", detail: "Create new email", icon: Mail, tone: "text-violet-300 bg-violet-300/[0.08]", onClick: () => onNavigate("email-generator") },
+    { label: "Open AI chat", detail: "Start conversation", icon: MessageSquareText, tone: "text-cyan-300 bg-cyan-300/[0.08]", onClick: () => onNavigate("chat-ai") },
+    { label: "Create note", detail: "Write something", icon: FileText, tone: "text-amber-300 bg-amber-300/[0.08]", onClick: () => onNavigate("notes") },
+    { label: "Run backup", detail: "Backup vault now", icon: CloudUpload, tone: "text-sky-300 bg-sky-300/[0.08]", onClick: () => onNavigate("backup") },
+  ];
+
+  return (
+    <section className="overview-panel mt-5 p-4 sm:p-5">
+      <h2 className="overview-heading">Quick access</h2>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {actions.map(({ label, detail, icon: Icon, tone, onClick }) => (
+          <button key={label} type="button" onClick={onClick} className="group flex min-w-0 items-center gap-3 rounded-xl border border-white/[0.065] bg-white/[0.02] p-3 text-left transition hover:-translate-y-0.5 hover:border-cyan-300/15 hover:bg-cyan-300/[0.025]">
+            <span className={`grid size-10 shrink-0 place-items-center rounded-lg ${tone}`}><Icon className="size-[18px]" /></span>
+            <span className="min-w-0"><strong className="block truncate text-xs font-medium text-slate-100 group-hover:text-white">{label}</strong><small className="mt-1 block truncate text-[0.68rem] text-slate-500">{detail}</small></span>
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function formatRelativeTime(value) {
+  const date = parseActivityTimestamp(value);
+  const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (Number.isNaN(seconds)) return "Recently";
+  if (seconds < 60) return "Now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
 }
 
 function Metrics({ accounts }) {
@@ -998,16 +1222,16 @@ function Metrics({ accounts }) {
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {metrics.map(({ label, value, detail, icon: Icon, tone }) => (
         <article
           key={label}
-          className="metric-card rounded-xl border border-white/10 bg-white/[0.025] p-5"
+          className={`metric-card metric-card-${tone} rounded-xl border border-white/[0.09] p-5`}
         >
           <div className="flex justify-between">
             <div>
-              <p className="text-xs text-slate-400">{label}</p>
-              <strong className="mt-2 block text-2xl">{value}</strong>
+              <p className={`metric-label-${tone} text-xs font-medium`}>{label}</p>
+              <strong className="mt-2 block text-2xl tracking-[-0.03em]">{value}</strong>
             </div>
             <span
               className={`grid size-10 place-items-center rounded-xl ${metricToneStyles[tone]}`}
@@ -1015,7 +1239,7 @@ function Metrics({ accounts }) {
               <Icon className="size-5" />
             </span>
           </div>
-          <p className="mt-6 text-xs text-slate-500">{detail}</p>
+          <p className="mt-5 text-xs text-slate-400">{detail}</p>
         </article>
       ))}
     </section>
@@ -1071,7 +1295,7 @@ function EmailMetrics({ addresses }) {
       {metrics.map(({ label, value, detail, icon: Icon, tone }) => (
         <article
           key={label}
-          className="metric-card rounded-xl border border-white/10 bg-white/[0.025] p-5"
+          className="email-metric-card rounded-xl border border-white/[0.075] bg-white/[0.018] p-4"
         >
           <div className="flex justify-between gap-4">
             <div>
@@ -1084,7 +1308,7 @@ function EmailMetrics({ addresses }) {
               <Icon className="size-5" />
             </span>
           </div>
-          <p className="mt-6 text-xs text-slate-500">{detail}</p>
+          <p className="mt-4 text-xs text-slate-500">{detail}</p>
         </article>
       ))}
     </section>
@@ -1157,17 +1381,63 @@ function AccountAvatar({ account, compact = false }) {
   );
 }
 
-function getServiceLogoUrl(loginUrl) {
-  if (!loginUrl) return null;
+function findMatchingAuthenticator(account, entries) {
+  const email = normalizeAuthenticatorIdentity(account.email);
+  const username = normalizeAuthenticatorIdentity(account.username);
+  if (email) {
+    const emailMatch = entries.find((entry) => normalizeAuthenticatorIdentity(entry.accountName) === email);
+    if (emailMatch) return emailMatch;
+  }
+  if (!username) return null;
+
+  return entries.find((entry) => (
+    normalizeAuthenticatorIdentity(entry.accountName) === username
+    && serviceFamily(entry.issuer) === serviceFamily(account.platform || account.label)
+  )) || null;
+}
+
+function normalizeAuthenticatorIdentity(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function serviceFamily(value) {
+  const normalized = String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (["chatgpt", "openai"].includes(normalized)) return "openai";
+  if (["google", "gmail", "youtube", "gemini"].includes(normalized)) return "google";
+  if (["microsoft", "outlook", "office", "azure"].includes(normalized)) return "microsoft";
+  if (["twitter", "x", "xcom"].includes(normalized)) return "x";
+  return normalized;
+}
+
+function makeAuthenticatorCode(entry, now) {
   try {
-    const domain = new URL(loginUrl).hostname;
-    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
+    return new OTPAuth.TOTP({
+      issuer: entry.issuer,
+      label: entry.accountName,
+      algorithm: entry.algorithm,
+      digits: entry.digits,
+      period: entry.period,
+      secret: entry.secret,
+    }).generate({ timestamp: now });
   } catch {
-    return null;
+    return "";
   }
 }
 
-function AccountsTable({ accounts, loading, onDelete, onView, emptyMessage }) {
+function VerificationCode({ entry, now, compact = false }) {
+  if (!entry) return <span className="text-xs text-slate-700" title="No matching authenticator account">—</span>;
+  const code = makeAuthenticatorCode(entry, now);
+  if (!code) return <span className="text-xs text-slate-700">—</span>;
+
+  return (
+    <span className={`flex items-center gap-1.5 ${compact ? "mt-3" : ""}`} title={`Matched to ${entry.issuer}`}>
+      <span className="font-mono text-xs font-semibold tracking-[0.14em] text-cyan-200">{code.replace(/(.{3})/, "$1 ")}</span>
+      <CopyButton value={code} label="Copy verification code" compact />
+    </span>
+  );
+}
+
+function AccountsTable({ accounts, loading, authenticatorByAccount, authenticatorNow, onDelete, onView, emptyMessage }) {
   const [currentPage, setCurrentPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(accounts.length / accountsPerPage));
   const firstAccountIndex = (currentPage - 1) * accountsPerPage;
@@ -1218,6 +1488,7 @@ function AccountsTable({ accounts, loading, onDelete, onView, emptyMessage }) {
                     <p className="mt-2 text-[11px] text-slate-500">
                       {formatExpiry(account, true)}
                     </p>
+                    {authenticatorByAccount.get(account.id) && <VerificationCode entry={authenticatorByAccount.get(account.id)} now={authenticatorNow} compact />}
                   </div>
                   <AccountActions
                     account={account}
@@ -1232,7 +1503,7 @@ function AccountsTable({ accounts, loading, onDelete, onView, emptyMessage }) {
       </div>
 
       <div className="hidden overflow-x-auto xl:block">
-        <table className="w-full min-w-[860px] text-left">
+        <table className="w-full min-w-[1020px] text-left">
           <thead>
             <tr className="border-b border-white/8 text-[10px] uppercase tracking-wider text-slate-500">
               <th className="px-5 py-4">Account</th>
@@ -1240,6 +1511,7 @@ function AccountsTable({ accounts, loading, onDelete, onView, emptyMessage }) {
               <th className="px-5 py-4">Plan</th>
               <th className="px-5 py-4">Status</th>
               <th className="px-5 py-4">Expires</th>
+              <th className="px-5 py-4">Verification code</th>
               <th className="px-5 py-4">Actions</th>
             </tr>
           </thead>
@@ -1287,6 +1559,7 @@ function AccountsTable({ accounts, loading, onDelete, onView, emptyMessage }) {
                 <td className="px-5 text-xs text-slate-400">
                   {formatExpiry(account)}
                 </td>
+                <td className="px-5"><VerificationCode entry={authenticatorByAccount.get(account.id)} now={authenticatorNow} /></td>
                 <td className="px-5">
                   <AccountActions
                     account={account}

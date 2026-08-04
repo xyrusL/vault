@@ -20,7 +20,7 @@ import {
   ShieldAlert,
   Trash2,
 } from "lucide-react";
-import { PageTitle, SelectField } from "./DashboardUi";
+import { SelectField } from "./DashboardUi";
 
 const pageSize = 8;
 const filters = [
@@ -56,20 +56,13 @@ export default function ActivityView({ activity, loading, notificationsReadAt, o
 
   return (
     <section className="activity-page flex min-h-0 flex-col overflow-hidden rounded-2xl border border-cyan-100/10 bg-gradient-to-br from-[#07151c]/80 to-[#040b10]/90 shadow-[inset_0_1px_rgba(255,255,255,0.02)]">
-      <div className="shrink-0 p-4 sm:px-5 sm:py-4">
-        <PageTitle
-          eyebrow="Security history"
-          title="Activity log"
-          text="Every important vault action and suspicious login attempt appears here."
-          action={
-            <div className="flex flex-col gap-2 min-[480px]:flex-row">
-              <button type="button" onClick={onMarkAllRead} disabled={!unreadCount} className="flex min-h-11 items-center justify-center gap-2 rounded-lg border border-cyan-400/35 px-4 text-sm font-medium text-cyan-300 transition hover:bg-cyan-300/[0.06] disabled:cursor-not-allowed disabled:opacity-45">
-                <MailCheck className="size-4" /> Mark all as read
-              </button>
-              <SelectField name="activity-filter" value={filter} onChange={(event) => setFilter(event.target.value)} options={filters} ariaLabel="Filter activity" leadingIcon={<Funnel className="size-4 shrink-0 text-slate-400" />} className="min-h-11 min-w-44 bg-[#071219] text-sm" />
-            </div>
-          }
-        />
+      <div className="flex shrink-0 justify-end p-4 sm:px-5 sm:py-4">
+        <div className="flex w-full flex-col gap-2 min-[480px]:w-auto min-[480px]:flex-row">
+          <button type="button" onClick={onMarkAllRead} disabled={!unreadCount} className="flex min-h-11 items-center justify-center gap-2 rounded-lg border border-cyan-400/35 px-4 text-sm font-medium text-cyan-300 transition hover:bg-cyan-300/[0.06] disabled:cursor-not-allowed disabled:opacity-45">
+            <MailCheck className="size-4" /> Mark all as read
+          </button>
+          <SelectField name="activity-filter" value={filter} onChange={(event) => setFilter(event.target.value)} options={filters} ariaLabel="Filter activity" leadingIcon={<Funnel className="size-4 shrink-0 text-slate-400" />} className="min-h-11 min-w-44 bg-[#071219] text-sm" />
+        </div>
       </div>
       {loading ? (
         <p className="grid min-h-0 flex-1 place-items-center border-t border-cyan-100/10 text-center text-sm text-slate-400">

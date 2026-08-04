@@ -7,19 +7,15 @@ import {
   Eye,
   Inbox,
   Mail,
-  MoreHorizontal,
   RefreshCw,
-  Reply,
-  ReplyAll,
   Search,
   Settings2,
   Sparkles,
-  Star,
   Trash2,
   X,
 } from "lucide-react";
 import { apiFetch } from "../api";
-import { Modal, PageTitle, SelectField } from "./DashboardUi";
+import { Modal, SelectField } from "./DashboardUi";
 
 let emailGeneratorCache = null;
 
@@ -83,8 +79,12 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   const [forwardingDestinations, setForwardingDestinations] = useState([]);
   const [forwardDestinationId, setForwardDestinationId] = useState("");
   const [forwardingAvailable, setForwardingAvailable] = useState(false);
+  const [forwardingEmail, setForwardingEmail] = useState("");
+  const [forwardingVerificationNotice, setForwardingVerificationNotice] = useState("");
+  const [forwardingVerificationSubmitting, setForwardingVerificationSubmitting] = useState(false);
   const [addressDetails, setAddressDetails] = useState(null);
   const [detailsSaving, setDetailsSaving] = useState(false);
+  const [detailsFeedback, setDetailsFeedback] = useState(null);
   const [addressPage, setAddressPage] = useState(1);
   const [historyPage, setHistoryPage] = useState(1);
   const rowsPerPage = 10;
@@ -192,8 +192,35 @@ export default function EmailGeneratorView({ onAddressesChange }) {
     }
   }
 
+  async function addForwardingDestination() {
+    setForwardingVerificationSubmitting(true);
+    setForwardingVerificationNotice("");
+    setError("");
+    try {
+      const response = await apiFetch("/email/forwarding-destinations", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: forwardingEmail }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(errorMessage(result, "Unable to add forwarding destination."));
+      setForwardingEmail("");
+      if (result.verificationRequired) {
+        setForwardingVerificationNotice(`Cloudflare sent a verification email to ${result.data.address}. Open it, approve the address, then refresh destinations.`);
+      } else {
+        setForwardingVerificationNotice(`${result.data.address} is verified and ready for forwarding.`);
+      }
+      await loadForwardingDestinations();
+    } catch (destinationError) {
+      setError(destinationError.message);
+    } finally {
+      setForwardingVerificationSubmitting(false);
+    }
+  }
+
   async function openAddressDetails(address) {
     setError("");
+    setDetailsFeedback(null);
     try {
       const [response] = await Promise.all([
         apiFetch(`/email/addresses/${address.id}`),
@@ -212,6 +239,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
     if (!addressDetails) return;
     const destination = forwardingDestinations.find((item) => item.id === forwardDestinationId);
     setDetailsSaving(true);
+    setDetailsFeedback(null);
     setError("");
     try {
       const response = await apiFetch(`/email/addresses/${addressDetails.id}`, {
@@ -227,9 +255,14 @@ export default function EmailGeneratorView({ onAddressesChange }) {
       if (!response.ok) throw new Error(errorMessage(result, "Unable to save address settings."));
       setAddresses((current) => current.map((item) => item.id === result.data.id ? result.data : item));
       setAddressDetails(result.data);
-      setNotice("Email delivery settings saved.");
+      setDetailsFeedback({
+        type: "success",
+        message: result.data.deliveryMode === "forward"
+          ? `Saved. Future email will be forwarded to ${result.data.forwardTo}.`
+          : "Saved. Future email will be stored in Vault.",
+      });
     } catch (saveError) {
-      setError(saveError.message);
+      setDetailsFeedback({ type: "error", message: saveError.message });
     } finally {
       setDetailsSaving(false);
     }
@@ -261,7 +294,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   }
 
   useEffect(() => {
-    if (!emailGeneratorCache) refreshAll();
+    refreshAll();
   }, []);
 
   useEffect(() => {
@@ -337,7 +370,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
       const created = result.data || [];
       const selected = created[0]?.id || selectedAddressId;
       setPrefix("");
-      setNotice(`${created.length} email address${created.length === 1 ? "" : "es"} created.`);
+      setNotice(`${created.length} email address${created.length === 1 ? "" : "es"} created and ready to receive mail.`);
       await loadAddresses(selected);
       await loadMessages();
       setActiveTab("addresses");
@@ -357,6 +390,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
     setInboxPage(1);
     setSelectedInboxMessageIds([]);
     setSelectedMessage(null);
+    loadMessages().catch((loadError) => setError(loadError.message));
   }
 
   function closeInbox() {
@@ -581,12 +615,11 @@ export default function EmailGeneratorView({ onAddressesChange }) {
                 <button type="button" onClick={() => setSelectedMessage(null)} className="mb-4 flex items-center gap-2 text-xs text-slate-400 transition hover:text-cyan-300 lg:hidden"><ArrowLeft className="size-4" /> Messages</button>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex min-w-0 flex-wrap items-center gap-3"><h2 className="break-words text-xl font-semibold text-white">{selectedMessage.subject || "(No subject)"}</h2>{!selectedMessage.readAt && <span className="rounded-full bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-200">Unread</span>}</div>
-                  <button type="button" className="grid size-9 shrink-0 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-cyan-300" aria-label="Star message"><Star className="size-5" /></button>
                 </div>
                 <div className="mt-6 flex items-center gap-4 border-b border-cyan-100/10 pb-6">
                   <span className="grid size-12 shrink-0 place-items-center rounded-full bg-cyan-300/10 text-lg font-semibold text-cyan-300">{selectedMessage.sender?.[0]?.toUpperCase() || "M"}</span>
                   <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-100">{selectedMessage.sender}</p><p className="mt-1 truncate text-xs text-slate-400">To: {selectedMessage.recipient}</p><p className="mt-2 text-xs text-slate-400">{formatDate(selectedMessage.receivedAt)}</p></div>
-                  <div className="flex items-center gap-1 text-slate-400"><button type="button" className="grid size-9 place-items-center rounded-lg hover:bg-white/5 hover:text-cyan-300" aria-label="Reply"><Reply className="size-4" /></button><button type="button" className="grid size-9 place-items-center rounded-lg hover:bg-white/5 hover:text-cyan-300" aria-label="Reply all"><ReplyAll className="size-4" /></button><button type="button" className="grid size-9 place-items-center rounded-lg hover:bg-white/5 hover:text-cyan-300" aria-label="More actions"><MoreHorizontal className="size-4" /></button><button type="button" onClick={() => setMessagesToDelete([selectedMessage])} className="grid size-9 place-items-center rounded-lg hover:bg-rose-400/[0.07] hover:text-rose-300" aria-label="Delete message"><Trash2 className="size-4" /></button></div>
+                  <button type="button" onClick={() => setMessagesToDelete([selectedMessage])} className="grid size-9 place-items-center rounded-lg text-slate-400 hover:bg-rose-400/[0.07] hover:text-rose-300" aria-label="Delete message"><Trash2 className="size-4" /></button>
                 </div>
                 <div className="mt-7 whitespace-pre-wrap break-words text-sm leading-7 text-slate-300">{selectedMessage.textBody || "This message has no plain-text content."}</div>
               </article>
@@ -609,8 +642,9 @@ export default function EmailGeneratorView({ onAddressesChange }) {
         {addressDetails && (
           <Modal title="Email address details" onClose={() => !detailsSaving && setAddressDetails(null)}>
             <div className="mt-4 rounded-xl border border-cyan-100/10 bg-[#071219] p-4"><p className="break-all text-sm font-semibold text-white">{addressDetails.fullAddress}</p><div className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><p className="text-slate-500">Created</p><p className="mt-1 text-slate-300">{formatDate(addressDetails.createdAt)}</p></div><div><p className="text-slate-500">Storage used</p><p className="mt-1 text-slate-300">{formatBytes(addressDetails.storageBytes || 0)}</p></div></div></div>
-            <div className="mt-4"><p className="text-xs font-medium text-slate-300">Delivery</p><div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-[#071219] p-1 text-xs"><button type="button" onClick={() => setAddressDetails((current) => ({ ...current, deliveryMode: "vault" }))} className={`rounded-md px-3 py-2 ${addressDetails.deliveryMode === "vault" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Save in Vault</button><button type="button" onClick={() => setAddressDetails((current) => ({ ...current, deliveryMode: "forward" }))} disabled={!forwardingAvailable || !forwardingDestinations.length} className={`rounded-md px-3 py-2 disabled:opacity-40 ${addressDetails.deliveryMode === "forward" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Forward real email</button></div>{addressDetails.deliveryMode === "forward" ? <SelectField name="forwardDestinationId" value={forwardDestinationId} onChange={(event) => setForwardDestinationId(event.target.value)} options={forwardingOptions} ariaLabel="Forward to" className="mt-3 min-h-10 text-xs" /> : <p className="mt-3 text-xs text-slate-500">Not forwarding</p>}</div>
-            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setAddressDetails(null)} className="h-10 rounded-lg border border-white/10 px-4 text-xs text-slate-300">Close</button><button type="button" onClick={saveAddressDetails} disabled={detailsSaving || (addressDetails.deliveryMode === "forward" && !forwardDestinationId)} className="h-10 rounded-lg bg-cyan-400 px-4 text-xs font-semibold text-[#001217] disabled:opacity-50">{detailsSaving ? "Saving..." : "Save changes"}</button></div>
+            <div className="mt-4"><p className="text-xs font-medium text-slate-300">Delivery</p><div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-[#071219] p-1 text-xs"><button type="button" onClick={() => { setAddressDetails((current) => ({ ...current, deliveryMode: "vault" })); setDetailsFeedback(null); }} className={`rounded-md px-3 py-2 ${addressDetails.deliveryMode === "vault" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Save in Vault</button><button type="button" onClick={() => { setAddressDetails((current) => ({ ...current, deliveryMode: "forward" })); setDetailsFeedback(null); }} disabled={!forwardingAvailable || !forwardingDestinations.length} className={`rounded-md px-3 py-2 disabled:opacity-40 ${addressDetails.deliveryMode === "forward" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Forward real email</button></div>{addressDetails.deliveryMode === "forward" ? <><SelectField name="forwardDestinationId" value={forwardDestinationId} onChange={(event) => { setForwardDestinationId(event.target.value); setDetailsFeedback(null); }} options={forwardingOptions} ariaLabel="Forward to" className="mt-3 min-h-10 text-xs" /><p className="mt-2 text-[0.68rem] leading-5 text-slate-500">New mail is forwarded by the Vault Worker and is not stored. Earlier Vault messages remain available.</p></> : <p className="mt-3 text-xs text-slate-500">New mail will be stored in this Vault inbox.</p>}</div>
+            {detailsFeedback && <div className={`mt-4 rounded-lg border px-3 py-2.5 text-xs ${detailsFeedback.type === "success" ? "border-emerald-300/20 bg-emerald-300/[0.06] text-emerald-200" : "border-red-400/20 bg-red-400/[0.06] text-red-300"}`} role={detailsFeedback.type === "error" ? "alert" : "status"}>{detailsFeedback.message}</div>}
+            <div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setAddressDetails(null)} className="h-10 rounded-lg border border-white/10 px-4 text-xs text-slate-300">Close</button><button type="button" onClick={saveAddressDetails} disabled={detailsSaving || (addressDetails.deliveryMode === "forward" && !forwardDestinationId)} className="flex h-10 items-center gap-2 rounded-lg bg-cyan-400 px-4 text-xs font-semibold text-[#001217] disabled:opacity-50">{detailsSaving ? "Saving..." : detailsFeedback?.type === "success" ? <><Check className="size-4" />Saved</> : "Save changes"}</button></div>
           </Modal>
         )}
       </div>
@@ -619,25 +653,18 @@ export default function EmailGeneratorView({ onAddressesChange }) {
 
   return (
     <div>
-      <PageTitle
-        eyebrow="Email generator"
-        title="Generate email addresses"
-        text="Create secure, private email addresses instantly."
-        action={
-          <div className="flex flex-wrap items-center gap-2.5">
-            <div className="flex min-w-[150px] items-center justify-between gap-3 rounded-lg border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 px-3 py-1.5 shadow-[inset_0_1px_rgba(255,255,255,0.015)] max-md:w-full">
-              <div>
-                <p className="text-[0.68rem] text-slate-400">Total generated</p>
-                <p className="text-base font-semibold leading-5">{addresses.length}</p>
-              </div>
-              <span className="grid size-8 place-items-center rounded-lg bg-cyan-400/10 text-cyan-300"><Mail className="size-4" /></span>
-            </div>
-            <button type="button" onClick={() => { setGeneratorOpen(true); loadForwardingDestinations(); }} className="flex h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-cyan-400 via-cyan-400 to-sky-500 px-3.5 text-xs font-bold text-[#001217] shadow-[0_10px_28px_rgba(13,192,220,0.12)] transition hover:-translate-y-px hover:brightness-110 max-md:w-full">
-              <span className="text-base leading-none">+</span> Generate new email
-            </button>
+      <div className="flex flex-wrap justify-end gap-2.5">
+        <div className="flex min-w-[150px] items-center justify-between gap-3 rounded-lg border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 px-3 py-1.5 shadow-[inset_0_1px_rgba(255,255,255,0.015)] max-md:w-full">
+          <div>
+            <p className="text-[0.68rem] text-slate-400">Total generated</p>
+            <p className="text-base font-semibold leading-5">{addresses.length}</p>
           </div>
-        }
-      />
+          <span className="grid size-8 place-items-center rounded-lg bg-cyan-400/10 text-cyan-300"><Mail className="size-4" /></span>
+        </div>
+        <button type="button" onClick={() => { setGeneratorOpen(true); setForwardingVerificationNotice(""); loadForwardingDestinations(); }} className="flex h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-cyan-400 via-cyan-400 to-sky-500 px-3.5 text-xs font-bold text-[#001217] shadow-[0_10px_28px_rgba(13,192,220,0.12)] transition hover:-translate-y-px hover:brightness-110 max-md:w-full">
+          <span className="text-base leading-none">+</span> Generate new email
+        </button>
+      </div>
 
       {(error || notice) && (
         <div className={`mt-5 rounded-lg border px-4 py-3 text-sm ${error ? "border-red-400/20 bg-red-400/[0.06] text-red-300" : "border-cyan-300/20 bg-cyan-300/[0.06] text-cyan-200"}`} role={error ? "alert" : "status"}>
@@ -679,10 +706,22 @@ export default function EmailGeneratorView({ onAddressesChange }) {
                 <SelectField label="Forward to" name="forwardDestinationId" value={forwardDestinationId} onChange={(event) => setForwardDestinationId(event.target.value)} options={forwardingOptions} className="min-h-10 text-xs" />
               )}
 
-              {!forwardingAvailable && <p className="text-[0.7rem] text-slate-500">Forwarding becomes available after a destination is verified in Cloudflare Email Routing.</p>}
+              {!forwardingAvailable && <p className="text-[0.7rem] text-slate-500">Forwarding requires a destination verified by Cloudflare.</p>}
+
+              <div className="rounded-lg border border-cyan-100/10 bg-[#071219] p-3">
+                <p className="text-[0.7rem] font-medium text-slate-300">Add forwarding destination</p>
+                <div className="mt-2 flex gap-2">
+                  <input type="email" value={forwardingEmail} onChange={(event) => setForwardingEmail(event.target.value)} placeholder="you@example.com" className="min-h-9 min-w-0 flex-1 rounded-lg border border-cyan-100/15 bg-[#040d12] px-3 text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/55" />
+                  <button type="button" onClick={addForwardingDestination} disabled={forwardingVerificationSubmitting || !forwardingEmail.trim()} className="min-h-9 shrink-0 rounded-lg border border-cyan-300/25 px-3 text-xs text-cyan-200 transition hover:bg-cyan-300/[0.06] disabled:opacity-40">{forwardingVerificationSubmitting ? "Sending..." : "Verify"}</button>
+                  <button type="button" onClick={loadForwardingDestinations} className="grid size-9 shrink-0 place-items-center rounded-lg border border-cyan-100/15 text-slate-400 transition hover:text-cyan-300" aria-label="Refresh verified forwarding destinations"><RefreshCw className="size-4" /></button>
+                </div>
+                {forwardingVerificationNotice && <p className="mt-2 text-[0.7rem] leading-relaxed text-cyan-200" role="status">{forwardingVerificationNotice}</p>}
+              </div>
+
+              {submitting && <p className="text-center text-[0.7rem] text-cyan-200" role="status">Creating and synchronizing the routing rule with Cloudflare...</p>}
 
               <button type="submit" disabled={submitting || loading || !domainId || !prefix.trim() || (deliveryMode === "forward" && !forwardDestinationId)} className="flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-cyan-400 text-sm font-semibold text-[#001217] transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50">
-                <Sparkles className="size-4" />{submitting ? "Generating..." : "Generate email"}
+                <Sparkles className="size-4" />{submitting ? "Syncing with Cloudflare..." : "Generate email"}
               </button>
             </div>
           </form>
@@ -696,7 +735,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
             <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
               <div><p className="text-slate-500">Created</p><p className="mt-1 text-slate-300">{formatDate(addressDetails.createdAt)}</p></div>
               <div><p className="text-slate-500">Last message</p><p className="mt-1 text-slate-300">{formatDate(addressDetails.lastMessageAt)}</p></div>
-              <div><p className="text-slate-500">Messages</p><p className="mt-1 text-slate-300">{addressDetails.messageCount}</p></div>
+              <div><p className="text-slate-500">Stored messages</p><p className="mt-1 text-slate-300">{addressDetails.messageCount}</p></div>
               <div><p className="text-slate-500">Storage used</p><p className="mt-1 text-slate-300">{formatBytes(addressDetails.storageBytes || 0)}</p></div>
             </div>
           </div>
@@ -704,17 +743,19 @@ export default function EmailGeneratorView({ onAddressesChange }) {
           <div className="mt-4">
             <p className="text-xs font-medium text-slate-300">Delivery</p>
             <div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-[#071219] p-1 text-xs">
-              <button type="button" onClick={() => setAddressDetails((current) => ({ ...current, deliveryMode: "vault" }))} className={`rounded-md px-3 py-2 transition ${addressDetails.deliveryMode === "vault" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Save in Vault</button>
-              <button type="button" onClick={() => setAddressDetails((current) => ({ ...current, deliveryMode: "forward" }))} disabled={!forwardingAvailable || !forwardingDestinations.length} className={`rounded-md px-3 py-2 transition disabled:opacity-40 ${addressDetails.deliveryMode === "forward" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Forward real email</button>
+              <button type="button" onClick={() => { setAddressDetails((current) => ({ ...current, deliveryMode: "vault" })); setDetailsFeedback(null); }} className={`rounded-md px-3 py-2 transition ${addressDetails.deliveryMode === "vault" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Save in Vault</button>
+              <button type="button" onClick={() => { setAddressDetails((current) => ({ ...current, deliveryMode: "forward" })); setDetailsFeedback(null); }} disabled={!forwardingAvailable || !forwardingDestinations.length} className={`rounded-md px-3 py-2 transition disabled:opacity-40 ${addressDetails.deliveryMode === "forward" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Forward real email</button>
             </div>
             {addressDetails.deliveryMode === "forward" ? (
-              <SelectField name="forwardDestinationId" value={forwardDestinationId} onChange={(event) => setForwardDestinationId(event.target.value)} options={forwardingOptions} ariaLabel="Forward to" className="mt-3 min-h-10 text-xs" />
-            ) : <p className="mt-3 text-xs text-slate-500">Not forwarding</p>}
+              <><SelectField name="forwardDestinationId" value={forwardDestinationId} onChange={(event) => { setForwardDestinationId(event.target.value); setDetailsFeedback(null); }} options={forwardingOptions} ariaLabel="Forward to" className="mt-3 min-h-10 text-xs" /><p className="mt-2 text-[0.68rem] leading-5 text-slate-500">New mail is forwarded by the Vault Worker and is not stored. Earlier Vault messages remain available.</p></>
+            ) : <p className="mt-3 text-xs text-slate-500">New mail will be stored in this Vault inbox.</p>}
           </div>
+
+          {detailsFeedback && <div className={`mt-4 rounded-lg border px-3 py-2.5 text-xs ${detailsFeedback.type === "success" ? "border-emerald-300/20 bg-emerald-300/[0.06] text-emerald-200" : "border-red-400/20 bg-red-400/[0.06] text-red-300"}`} role={detailsFeedback.type === "error" ? "alert" : "status"}>{detailsFeedback.message}</div>}
 
           <div className="mt-5 flex justify-end gap-2">
             <button type="button" onClick={() => setAddressDetails(null)} disabled={detailsSaving} className="h-10 rounded-lg border border-white/10 px-4 text-xs text-slate-300">Close</button>
-            <button type="button" onClick={saveAddressDetails} disabled={detailsSaving || (addressDetails.deliveryMode === "forward" && !forwardDestinationId)} className="h-10 rounded-lg bg-cyan-400 px-4 text-xs font-semibold text-[#001217] disabled:opacity-50">{detailsSaving ? "Saving..." : "Save changes"}</button>
+            <button type="button" onClick={saveAddressDetails} disabled={detailsSaving || (addressDetails.deliveryMode === "forward" && !forwardDestinationId)} className="flex h-10 items-center gap-2 rounded-lg bg-cyan-400 px-4 text-xs font-semibold text-[#001217] disabled:opacity-50">{detailsSaving ? "Saving..." : detailsFeedback?.type === "success" ? <><Check className="size-4" />Saved</> : "Save changes"}</button>
           </div>
         </Modal>
       )}

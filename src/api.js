@@ -35,6 +35,8 @@ export function apiFetch(path, options = {}) {
   });
 }
 
+export default apiFetch;
+
 function getDevelopmentToken() {
   if (!developmentTokensEnabled) {
     clearDevelopmentToken();
