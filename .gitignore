@@ -21,7 +21,6 @@ dist-ssr
 
 # Local AI and browser tooling
 .agents/
-.claude/
 .kilo/
 .playwright-mcp/
 
