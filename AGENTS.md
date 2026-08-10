@@ -1,18 +1,26 @@
 # Project Instructions
 
-## Keep Work Simple
+## Work Style
 
 - Use the simplest reliable approach for small, well-scoped tasks.
-- Do not overcomplicate straightforward changes with plans, agents, task lists, or extensive workflows.
-- Do not invoke Superpowers skills unless the user explicitly requests one.
-- Make focused changes only; avoid unrelated refactors or speculative abstractions.
+- Understand the user’s intended outcome before changing code.
+- If a request is incomplete, infer the safest sensible details and complete the task without unnecessary questions.
+- Continue through implementation and validation; do not stop at a plan or partial result.
+- Keep changes focused and avoid unrelated refactors or speculative abstractions.
 
-## Autonomy and Approval
+## UI and Features
 
-- Proceed immediately using best judgment; do not ask for approval or clarification for routine, low-risk work.
-- Ask for user approval only when an action is genuinely high-risk, difficult to reverse, externally visible, or unusually resource-intensive.
-- When details are unspecified, choose the safest sensible default that best completes the request instead of presenting options or asking specific questions.
-- Prefer completing the task promptly over pausing for unnecessary confirmation.
+- Follow the site’s existing visual theme, components, spacing, colors, and interaction patterns.
+- Every new UI feature must work on both desktop and mobile web.
+- Design responsively, prevent horizontal overflow, and keep content usable on small or short screens.
+- You may create a distinct layout when needed, but it must still feel consistent with the product.
+- Preserve accessibility, clear navigation, touch-friendly controls, and predictable browser behavior.
+
+## Autonomy
+
+- Proceed immediately with routine, low-risk work using best judgment.
+- Ask only when a missing decision is high-risk, irreversible, or would materially change the requested outcome.
+- When fixing or building a feature, handle obvious supporting work required for it to function completely.
 
 ## Validation
 

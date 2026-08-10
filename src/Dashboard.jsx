@@ -20,26 +20,19 @@ import NotesView from "./dashboard/NotesView";
 import PluginsView from "./dashboard/PluginsView";
 import SettingsView from "./dashboard/SettingsView";
 import VaultView from "./dashboard/VaultView";
+import {
+  getDashboardPageFromPath,
+  getDashboardPagePath,
+  pageDetails,
+} from "./dashboard/shared/navigation";
 
 const notificationStorageKey = "vault_notifications_read_at";
 const themeStorageKey = "vault_theme";
 const dashboardThemes = new Set(["dark", "gray", "midnight"]);
-const pageTitles = {
-  dashboard: "Dashboard",
-  vault: "Vault",
-  accounts: "Accounts",
-  authenticator: "Auth 2FA",
-  "email-generator": "Email Generator",
-  "chat-ai": "AI Chat",
-  notes: "Notes",
-  plugins: "Plugins",
-  activity: "Activity Log",
-  backup: "Backup",
-  settings: "Settings",
-};
-
 function Dashboard() {
-  const [activePage, setActivePage] = useState("dashboard");
+  const [activePage, setActivePage] = useState(() =>
+    getDashboardPageFromPath(window.location.pathname),
+  );
   const [pageInteractionContext, setPageInteractionContext] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
@@ -61,6 +54,17 @@ function Dashboard() {
       return dashboardThemes.has(savedTheme) ? savedTheme : "midnight";
     },
   );
+
+  const navigate = useCallback((page, { replace = false } = {}) => {
+    if (!Object.hasOwn(pageDetails, page)) return;
+    const nextPath = getDashboardPagePath(page);
+    const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
+    setPageInteractionContext(null);
+    setActivePage(page);
+    setMenuOpen(false);
+    if (currentPath === nextPath) return;
+    window.history[replace ? "replaceState" : "pushState"]({}, "", nextPath);
+  }, []);
 
   async function loadData() {
     setLoading(true);
@@ -118,6 +122,25 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
+    const canonicalPath = getDashboardPagePath(activePage);
+    const currentPath = window.location.pathname.replace(/\/+$/, "") || "/";
+    if (currentPath !== canonicalPath) {
+      window.history.replaceState({}, "", canonicalPath);
+    }
+    document.title = `${pageDetails[activePage]?.title || "Dashboard"} | Vault`;
+  }, [activePage]);
+
+  useEffect(() => {
+    function handlePopState() {
+      setPageInteractionContext(null);
+      setMenuOpen(false);
+      setActivePage(getDashboardPageFromPath(window.location.pathname));
+    }
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     function handleAiThemeChange(event) {
       if (!dashboardThemes.has(event.detail?.theme)) return;
       changeTheme(event.detail.theme);
@@ -129,13 +152,12 @@ function Dashboard() {
   useEffect(() => {
     function handleAiNavigation(event) {
       const pageId = event.detail?.pageId;
-      if (!Object.hasOwn(pageTitles, pageId)) return;
-      setPageInteractionContext(null);
-      setActivePage(pageId);
+      if (!Object.hasOwn(pageDetails, pageId)) return;
+      navigate(pageId);
     }
     window.addEventListener("vault:navigate", handleAiNavigation);
     return () => window.removeEventListener("vault:navigate", handleAiNavigation);
-  }, []);
+  }, [navigate]);
 
   async function refreshActivity() {
     try {
@@ -188,11 +210,6 @@ function Dashboard() {
     navigate("activity");
   }
 
-  function navigate(page) {
-    setPageInteractionContext(null);
-    setActivePage(page);
-  }
-
   function markNotificationsRead() {
     const now = new Date().toISOString();
     setNotificationsReadAt(now);
@@ -230,7 +247,7 @@ function Dashboard() {
   const notificationLevel = getNotificationLevel(apiHealthy, unreadActivity);
   const pageContext = {
     pageId: activePage,
-    pageTitle: pageTitles[activePage] || "Dashboard",
+    pageTitle: pageDetails[activePage]?.title || "Dashboard",
     accountCount: accounts.length,
     emailAddressCount: emailAddresses.length,
     receivedEmailCount: emailAddresses.reduce(

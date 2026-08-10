@@ -32,8 +32,9 @@ function App() {
   const [authStatus, setAuthStatus] = useState("checking");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const currentPath = window.location.pathname.replace(/\/$/, "") || "/";
   const isDashboard =
-    window.location.pathname.replace(/\/$/, "") === "/dashboard";
+    currentPath === "/dashboard" || currentPath.startsWith("/dashboard/");
 
   useEffect(() => {
     let active = true;

@@ -162,22 +162,24 @@ function NoteContentEditor({ value, onChange, rows, placeholder, className, onCl
         data-rows={rows}
         className={`note-content-editor ${className}`}
       />
-      <div onMouseDown={(event) => event.preventDefault()} className="flex items-center gap-0.5 overflow-x-auto border-t border-white/[0.06] px-3 py-2">
-        {onDelete && <button type="button" onClick={onDelete} className={`${toolClass} text-red-300 hover:bg-red-500/10 hover:text-red-200`} aria-label="Delete note" title="Delete note"><Trash2 className="size-4" /></button>}
-        {onDelete && <span className="mx-1 h-5 w-px shrink-0 bg-white/[0.08]" />}
-        <button type="button" onClick={() => runCommand("bold")} className={toolClass} aria-label="Bold" title="Bold"><Bold className="size-4" /></button>
-        <button type="button" onClick={() => runCommand("italic")} className={toolClass} aria-label="Italic" title="Italic"><Italic className="size-4" /></button>
-        <button type="button" onClick={() => runCommand("formatBlock", "h2")} className={toolClass} aria-label="Heading" title="Heading"><Heading2 className="size-4" /></button>
-        <span className="mx-1 h-5 w-px shrink-0 bg-white/[0.08]" />
-        <button type="button" onClick={insertChecklist} className={toolClass} aria-label="Checklist" title="Checklist"><ListChecks className="size-4" /></button>
-        <button type="button" onClick={() => runCommand("insertUnorderedList")} className={toolClass} aria-label="Bulleted list" title="Bulleted list"><List className="size-4" /></button>
-        <button type="button" onClick={() => runCommand("insertOrderedList")} className={toolClass} aria-label="Numbered list" title="Numbered list"><ListOrdered className="size-4" /></button>
-        <button type="button" onClick={insertLink} className={toolClass} aria-label="Insert link" title="Insert link"><Link className="size-4" /></button>
-        <button type="button" onClick={() => runCommand("insertText", new Date().toLocaleString())} className={toolClass} aria-label="Insert date and time" title="Insert date and time"><Clock3 className="size-4" /></button>
-        <span className="mx-1 h-5 w-px shrink-0 bg-white/[0.08]" />
-        <button type="button" onClick={() => runCommand("undo")} className={toolClass} aria-label="Undo" title="Undo"><Undo2 className="size-4" /></button>
-        <button type="button" onClick={() => runCommand("redo")} className={toolClass} aria-label="Redo" title="Redo"><Redo2 className="size-4" /></button>
-        {toolbarEnd ? <div className="ml-auto flex shrink-0 items-center gap-2">{toolbarEnd}</div> : onClose && <button type="button" onClick={onClose} className="ml-auto h-9 shrink-0 rounded-lg px-3 text-sm font-medium text-slate-300 hover:bg-white/5 hover:text-white">Close</button>}
+      <div onMouseDown={(event) => event.preventDefault()} className="note-editor-toolbar flex items-center border-t border-white/[0.06] px-3 py-2">
+        <div className="note-editor-tools flex min-w-0 items-center gap-0.5 overflow-x-auto">
+          {onDelete && <button type="button" onClick={onDelete} className={`${toolClass} note-editor-tool text-red-300 hover:bg-red-500/10 hover:text-red-200`} aria-label="Delete note" title="Delete note"><Trash2 className="size-4" /></button>}
+          {onDelete && <span className="mx-1 h-5 w-px shrink-0 bg-white/[0.08]" />}
+          <button type="button" onClick={() => runCommand("bold")} className={`${toolClass} note-editor-tool`} aria-label="Bold" title="Bold"><Bold className="size-4" /></button>
+          <button type="button" onClick={() => runCommand("italic")} className={`${toolClass} note-editor-tool`} aria-label="Italic" title="Italic"><Italic className="size-4" /></button>
+          <button type="button" onClick={() => runCommand("formatBlock", "h2")} className={`${toolClass} note-editor-tool`} aria-label="Heading" title="Heading"><Heading2 className="size-4" /></button>
+          <span className="mx-1 h-5 w-px shrink-0 bg-white/[0.08]" />
+          <button type="button" onClick={insertChecklist} className={`${toolClass} note-editor-tool`} aria-label="Checklist" title="Checklist"><ListChecks className="size-4" /></button>
+          <button type="button" onClick={() => runCommand("insertUnorderedList")} className={`${toolClass} note-editor-tool`} aria-label="Bulleted list" title="Bulleted list"><List className="size-4" /></button>
+          <button type="button" onClick={() => runCommand("insertOrderedList")} className={`${toolClass} note-editor-tool`} aria-label="Numbered list" title="Numbered list"><ListOrdered className="size-4" /></button>
+          <button type="button" onClick={insertLink} className={`${toolClass} note-editor-tool`} aria-label="Insert link" title="Insert link"><Link className="size-4" /></button>
+          <button type="button" onClick={() => runCommand("insertText", new Date().toLocaleString())} className={`${toolClass} note-editor-tool`} aria-label="Insert date and time" title="Insert date and time"><Clock3 className="size-4" /></button>
+          <span className="mx-1 h-5 w-px shrink-0 bg-white/[0.08]" />
+          <button type="button" onClick={() => runCommand("undo")} className={`${toolClass} note-editor-tool`} aria-label="Undo" title="Undo"><Undo2 className="size-4" /></button>
+          <button type="button" onClick={() => runCommand("redo")} className={`${toolClass} note-editor-tool`} aria-label="Redo" title="Redo"><Redo2 className="size-4" /></button>
+        </div>
+        {toolbarEnd ? <div className="note-editor-actions ml-auto flex shrink-0 items-center gap-2">{toolbarEnd}</div> : onClose && <div className="note-editor-actions ml-auto shrink-0"><button type="button" onClick={onClose} className="h-9 rounded-lg px-3 text-sm font-medium text-slate-300 hover:bg-white/5 hover:text-white">Close</button></div>}
       </div>
     </>
   );
@@ -307,7 +309,7 @@ export default function NotesView() {
 
   return (
     <section className="notes-view">
-      <form onSubmit={createNote} className={`mx-auto max-w-[1180px] overflow-hidden rounded-xl border border-white/10 bg-[#0a141b]/90 shadow-xl shadow-black/20 transition focus-within:border-cyan-300/30 ${composeOpen ? "is-open" : ""}`}>
+      <form onSubmit={createNote} className={`notes-composer mx-auto max-w-[1180px] overflow-hidden rounded-xl border border-white/10 bg-[#0a141b]/90 shadow-xl shadow-black/20 transition focus-within:border-cyan-300/30 ${composeOpen ? "is-open" : ""}`}>
         {composeOpen ? (
           <>
             <input name="title" value={draft.title} onChange={updateDraft} maxLength={200} placeholder="Note title" aria-label="Note title" autoFocus className="w-full bg-transparent px-5 pt-4 text-base font-semibold text-white outline-none placeholder:text-slate-500" />
@@ -329,9 +331,9 @@ export default function NotesView() {
         )}
       </form>
 
-      {error && <p className="mx-auto mt-4 max-w-[1180px] rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>}
+      {error && <p role="alert" className="mx-auto mt-4 max-w-[1180px] rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>}
 
-      {!loadError && <div className="mx-auto mt-9 flex w-full max-w-[1180px] flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+      {!loadError && <div className="notes-controls mx-auto mt-9 flex w-full max-w-[1180px] flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-1 flex-col gap-3 sm:flex-row">
           <div className="relative w-full sm:max-w-sm">
             <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-500" />
@@ -340,8 +342,8 @@ export default function NotesView() {
         </div>
         <div className="flex items-center gap-3">
           <div className="flex rounded-xl border border-white/10 bg-[#081219] p-1">
-            <button type="button" onClick={() => setLayout("grid")} aria-label="Grid view" className={`grid size-9 place-items-center rounded-lg ${layout === "grid" ? "bg-cyan-400/10 text-cyan-300" : "text-slate-500 hover:text-slate-200"}`}><LayoutGrid className="size-[18px]" /></button>
-            <button type="button" onClick={() => setLayout("list")} aria-label="List view" className={`grid size-9 place-items-center rounded-lg ${layout === "list" ? "bg-cyan-400/10 text-cyan-300" : "text-slate-500 hover:text-slate-200"}`}><List className="size-[18px]" /></button>
+              <button type="button" onClick={() => setLayout("grid")} aria-label="Grid view" aria-pressed={layout === "grid"} className={`grid size-9 place-items-center rounded-lg ${layout === "grid" ? "bg-cyan-400/10 text-cyan-300" : "text-slate-500 hover:text-slate-200"}`}><LayoutGrid className="size-[18px]" /></button>
+              <button type="button" onClick={() => setLayout("list")} aria-label="List view" aria-pressed={layout === "list"} className={`grid size-9 place-items-center rounded-lg ${layout === "list" ? "bg-cyan-400/10 text-cyan-300" : "text-slate-500 hover:text-slate-200"}`}><List className="size-[18px]" /></button>
           </div>
           <div ref={sortMenuRef} className="relative min-w-44 flex-1 sm:flex-none">
             <button
@@ -388,7 +390,7 @@ export default function NotesView() {
       ) : filteredNotes.length ? (
         <div className={`mx-auto mt-5 w-full max-w-[1180px] ${layout === "grid" ? "columns-1 gap-4 sm:columns-2 xl:columns-4" : "space-y-3"}`}>
           {filteredNotes.map((note) => (
-            <article key={note.id} className={`group relative mb-4 break-inside-avoid overflow-hidden rounded-xl border border-white/[0.1] bg-gradient-to-br from-[#0b171e] to-[#071117] shadow-lg shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-300/25 hover:shadow-black/25 ${layout === "list" ? "mb-0" : ""}`}>
+            <article key={note.id} className={`note-card group relative mb-4 break-inside-avoid overflow-hidden rounded-xl border border-white/[0.1] bg-gradient-to-br from-[#0b171e] to-[#071117] shadow-lg shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-300/25 hover:shadow-black/25 ${layout === "list" ? "mb-0" : ""}`}>
               <button type="button" onClick={() => setEditing({ ...note })} className={`w-full px-4 pb-2 pt-4 text-left ${layout === "list" ? "pr-28" : ""}`}>
                 <span className="absolute right-4 top-4 text-cyan-300 opacity-0 transition group-hover:opacity-100"><Pin className="size-4" /></span>
                 <h2 className="line-clamp-2 pr-5 text-base font-semibold leading-6 text-slate-100">{note.title || "Untitled note"}</h2>
@@ -396,8 +398,8 @@ export default function NotesView() {
               </button>
               <div className="flex min-h-11 items-center justify-between gap-3 px-4 pb-3 pt-1">
                 <div className="flex items-center gap-1 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
-                  <button type="button" onClick={() => setEditing({ ...note })} className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-cyan-400/10 hover:text-cyan-300" aria-label={`Edit ${note.title || "note"}`}><Pencil className="size-4" /></button>
-                  <button type="button" onClick={() => setDeleteNote(note)} className="grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-red-500/10 hover:text-red-300" aria-label={`Delete ${note.title || "note"}`}><Trash2 className="size-4" /></button>
+                  <button type="button" onClick={() => setEditing({ ...note })} className="note-card-action grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-cyan-400/10 hover:text-cyan-300" aria-label={`Edit ${note.title || "note"}`}><Pencil className="size-4" /></button>
+                  <button type="button" onClick={() => setDeleteNote(note)} className="note-card-action grid size-8 place-items-center rounded-lg text-slate-500 hover:bg-red-500/10 hover:text-red-300" aria-label={`Delete ${note.title || "note"}`}><Trash2 className="size-4" /></button>
                 </div>
                 <span className="ml-auto text-xs text-slate-500">{formatRelativeDate(note.updatedAt || note.updated_at)}</span>
               </div>
@@ -419,6 +421,7 @@ export default function NotesView() {
         <Modal
           title="Edit note"
           size="note"
+          className="note-editor-modal"
           onClose={() => !busy && setEditing(null)}
           header={(
             <div className="relative px-5 pb-2 pt-5 sm:px-6 sm:pt-6">

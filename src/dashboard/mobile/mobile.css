@@ -12,6 +12,168 @@
     overflow-x: clip;
   }
 
+  .notes-view {
+    padding-bottom: 0.75rem;
+  }
+
+  .notes-composer {
+    border-radius: 1rem;
+    background: linear-gradient(145deg, rgba(9, 24, 33, 0.96), rgba(5, 15, 22, 0.98));
+  }
+
+  .notes-composer > button {
+    min-height: 3.75rem;
+    padding-right: 1rem;
+    padding-left: 1rem;
+    font-size: 1rem;
+  }
+
+  .notes-composer > input,
+  .notes-controls input,
+  .notes-controls > div:last-child > div:last-child > button {
+    font-size: 1rem;
+  }
+
+  .notes-composer > input {
+    padding-right: 1rem;
+    padding-left: 1rem;
+  }
+
+  .notes-composer .note-content-editor {
+    min-height: 8rem;
+    padding-right: 1rem;
+    padding-left: 1rem;
+    font-size: 1rem;
+  }
+
+  .notes-controls {
+    margin-top: 1rem;
+    gap: 0.65rem;
+  }
+
+  .notes-controls > div:last-child {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.65rem;
+  }
+
+  .notes-controls > div:last-child > div:first-child button,
+  .notes-controls > div:last-child > div:last-child > button {
+    min-height: 2.75rem;
+  }
+
+  .notes-controls > div:last-child > div:first-child button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .notes-controls > div:last-child > div:last-child {
+    min-width: 0;
+  }
+
+  .notes-controls [role="listbox"] {
+    right: 0;
+    left: auto;
+    width: min(14rem, calc(100vw - 1.5rem));
+    min-width: 0;
+  }
+
+  .note-card {
+    margin-bottom: 0.75rem;
+    border-radius: 1rem;
+  }
+
+  .note-card > button:first-child {
+    min-height: 7rem;
+    padding: 1rem 1rem 0.5rem;
+  }
+
+  .note-card-action {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .note-editor-toolbar {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
+    padding: 0.55rem 0.75rem max(0.65rem, env(safe-area-inset-bottom));
+  }
+
+  .note-editor-tools {
+    width: 100%;
+    padding-bottom: 0.15rem;
+    scrollbar-width: none;
+  }
+
+  .note-editor-tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  .note-editor-tool {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+
+  .note-editor-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.55rem;
+    margin-left: 0;
+  }
+
+  .note-editor-actions:has(> button:only-child) {
+    grid-template-columns: 1fr;
+  }
+
+  .note-editor-actions > button {
+    width: 100%;
+    min-height: 2.75rem;
+  }
+
+  .modal-layer:has(.note-editor-modal) {
+    align-items: center;
+    padding: max(0.5rem, env(safe-area-inset-top)) 0.5rem max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  .modal-layer > .note-editor-modal {
+    display: flex;
+    width: 100%;
+    height: min(68dvh, 36rem);
+    max-height: calc(100dvh - max(1rem, env(safe-area-inset-top) + env(safe-area-inset-bottom) + 1rem));
+    flex-direction: column;
+    border-radius: 1.25rem;
+    background: linear-gradient(155deg, #091821, #041018 72%);
+  }
+
+  .note-editor-modal > div:first-child {
+    flex: 0 0 auto;
+    padding: 1rem 1rem 0.5rem;
+  }
+
+  .note-editor-modal > div:first-child input {
+    padding-right: 2.5rem;
+    font-size: 1.25rem;
+  }
+
+  .note-editor-modal > form {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .note-editor-modal .note-content-editor {
+    min-height: 0;
+    max-height: none;
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+  }
+
   .ai-chat-bubble {
     display: none;
   }

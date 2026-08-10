@@ -451,12 +451,14 @@ export default function AuthenticatorView() {
         <Modal
           title={cameraOpen ? "Scan authenticator QR code" : "Add authenticator account"}
           description={cameraOpen ? "Position the complete QR code inside the guide." : "Add a new 2FA account using a QR image or manual setup details."}
-          size={cameraOpen ? "authenticator-camera" : "authenticator"}
+          size="authenticator"
+          className="authenticator-modal"
           onClose={() => !busy && (cameraOpen ? stopCamera() : closeAddModal())}
         >
-          {cameraOpen ? (
-            <section className="mt-4">
-              <div className="relative flex h-[min(68dvh,640px)] min-h-[280px] items-center justify-center overflow-hidden rounded-xl border border-cyan-300/35 bg-black">
+          <div className="authenticator-modal-body">
+            {cameraOpen ? (
+              <section className="mt-4">
+              <div className="authenticator-camera-preview relative flex items-center justify-center overflow-hidden rounded-xl border border-cyan-300/35 bg-black">
                 <video ref={videoRef} playsInline muted className="size-full object-contain" aria-label="Camera preview" />
                 <div ref={cameraGuideRef} className="pointer-events-none absolute left-1/2 top-1/2 aspect-square h-[min(62%,24rem)] max-w-[80%] -translate-x-1/2 -translate-y-1/2 rounded-2xl border-2 border-cyan-300/80 shadow-[0_0_0_999px_rgba(0,0,0,0.24),0_0_28px_rgba(34,211,238,0.2)] transition-opacity duration-150">
                   <span className="absolute -left-0.5 -top-0.5 size-8 rounded-tl-2xl border-l-4 border-t-4 border-cyan-200" />
@@ -477,10 +479,10 @@ export default function AuthenticatorView() {
                 </div>
               </div>
               {cameraError && <p className="mt-3 rounded-md border border-amber-300/15 bg-amber-300/[0.06] px-3 py-2 text-xs text-amber-200" role="alert">{cameraError}</p>}
-              <p className="mt-3 flex items-center justify-center gap-2 text-xs text-slate-400"><Sparkles className="size-3.5 shrink-0 text-cyan-400" /> Scanning automatically. Account details will appear after a valid QR code is detected.</p>
-            </section>
-          ) : (
-          <form onSubmit={addEntry} onPaste={handlePaste} className="mt-3 space-y-2.5">
+              <p className="mt-3 flex items-center justify-center gap-2 text-center text-xs leading-5 text-slate-400" aria-live="polite"><Sparkles className="size-3.5 shrink-0 text-cyan-400" /> Scanning automatically. Account details will appear after a valid QR code is detected.</p>
+              </section>
+            ) : (
+              <form onSubmit={addEntry} onPaste={handlePaste} className="mt-3 space-y-2.5">
             {error && <p className="rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200" role="alert">{error}</p>}
             <section className="rounded-xl border border-cyan-100/15 bg-black/[0.08] p-3">
               <div className="flex items-center justify-between gap-3">
@@ -544,8 +546,9 @@ export default function AuthenticatorView() {
               {!form.uri.trim() && form.secret.trim() && !preview && <p className="mt-2 text-xs text-amber-300">Enter a valid Base32 setup key to generate the verification code.</p>}
             </section>
             <div className="flex justify-end gap-3"><button type="button" onClick={closeAddModal} disabled={busy} className="h-10 rounded-lg border border-white/10 px-5 text-sm text-slate-300 transition hover:bg-white/5">Cancel</button><button disabled={busy} className="flex h-10 items-center gap-2 rounded-lg border border-cyan-200/40 bg-gradient-to-r from-cyan-500 to-cyan-400 px-5 text-sm font-semibold text-[#021012] shadow-[0_8px_24px_rgba(6,182,212,0.18)] transition hover:brightness-110 disabled:opacity-50">{busy && <LoaderCircle className="size-4 animate-spin" />} Save account</button></div>
-          </form>
-          )}
+              </form>
+            )}
+          </div>
         </Modal>
       )}
 
