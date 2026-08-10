@@ -315,8 +315,25 @@
   .accounts-mobile-metric.is-orange small { color: #fb923c; }
   .accounts-mobile-metric.is-orange > span { background: rgba(251, 146, 60, 0.1); }
 
+  .accounts-page,
+  .accounts-toolbar,
+  .accounts-mobile-summary,
+  .accounts-mobile-list-heading {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .accounts-page {
+    overflow-x: hidden;
+  }
+
   .accounts-mobile-search {
     display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
   }
 
   .accounts-mobile-search label {
@@ -407,24 +424,54 @@
   }
 
   .accounts-list-panel {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: hidden;
     border: 0;
     background: transparent;
   }
 
   .accounts-list-panel > div > div:first-child {
     display: grid;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: hidden;
     gap: 0.75rem;
+    padding-right: 0.1rem;
+    padding-left: 0.1rem;
   }
 
   .account-mobile-card {
+    box-sizing: border-box;
+    width: calc(100% - 0.4rem);
+    min-width: 0;
+    max-width: calc(100% - 0.4rem);
+    margin-right: auto;
+    margin-left: auto;
     padding: 1rem;
+    overflow: hidden;
     border: 1px solid rgba(148, 163, 184, 0.16);
     border-radius: 1rem;
     background: linear-gradient(145deg, rgba(6, 19, 28, 0.96), rgba(2, 11, 17, 0.98));
   }
 
   .account-mobile-card > div {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     gap: 0.65rem;
+  }
+
+  .account-mobile-card > div > div:last-child,
+  .account-mobile-head,
+  .account-mobile-head > div:first-child,
+  .account-mobile-head > div:first-child > div {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .account-mobile-title {
@@ -436,7 +483,10 @@
 
   .account-mobile-email {
     display: block;
+    min-width: 0;
     max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
   }
 
@@ -477,6 +527,9 @@
 
   .account-mobile-actions {
     display: flex;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     align-items: center;
     gap: 0.55rem;
     margin-top: 0.7rem;
