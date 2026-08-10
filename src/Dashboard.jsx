@@ -9,10 +9,13 @@ import {
 import ActivityView from "./dashboard/ActivityView";
 import AuthenticatorView from "./dashboard/AuthenticatorView";
 import BackupView from "./dashboard/BackupView";
-import ChatAiView from "./dashboard/ChatAiView";
-import { DashboardHeader, Sidebar } from "./dashboard/DashboardChrome";
+import { DashboardHeader } from "./dashboard/DashboardChrome";
+import DesktopSidebar from "./dashboard/desktop/DesktopSidebar";
+import MobileDrawer from "./dashboard/mobile/MobileDrawer";
+import MobileNavigation from "./dashboard/mobile/MobileNavigation";
 import { Modal } from "./dashboard/DashboardUi";
 import EmailGeneratorView from "./dashboard/EmailGeneratorView";
+import FloatingAiChat from "./dashboard/FloatingAiChat";
 import NotesView from "./dashboard/NotesView";
 import PluginsView from "./dashboard/PluginsView";
 import SettingsView from "./dashboard/SettingsView";
@@ -21,10 +24,23 @@ import VaultView from "./dashboard/VaultView";
 const notificationStorageKey = "vault_notifications_read_at";
 const themeStorageKey = "vault_theme";
 const dashboardThemes = new Set(["dark", "gray", "midnight"]);
+const pageTitles = {
+  dashboard: "Dashboard",
+  vault: "Vault",
+  accounts: "Accounts",
+  authenticator: "Auth 2FA",
+  "email-generator": "Email Generator",
+  "chat-ai": "AI Chat",
+  notes: "Notes",
+  plugins: "Plugins",
+  activity: "Activity Log",
+  backup: "Backup",
+  settings: "Settings",
+};
 
 function Dashboard() {
   const [activePage, setActivePage] = useState("dashboard");
-  const [chatInitialized, setChatInitialized] = useState(false);
+  const [pageInteractionContext, setPageInteractionContext] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [accountToDelete, setAccountToDelete] = useState(null);
@@ -102,8 +118,24 @@ function Dashboard() {
   }, []);
 
   useEffect(() => {
-    if (activePage === "chat-ai") setChatInitialized(true);
-  }, [activePage]);
+    function handleAiThemeChange(event) {
+      if (!dashboardThemes.has(event.detail?.theme)) return;
+      changeTheme(event.detail.theme);
+    }
+    window.addEventListener("vault:theme", handleAiThemeChange);
+    return () => window.removeEventListener("vault:theme", handleAiThemeChange);
+  }, []);
+
+  useEffect(() => {
+    function handleAiNavigation(event) {
+      const pageId = event.detail?.pageId;
+      if (!Object.hasOwn(pageTitles, pageId)) return;
+      setPageInteractionContext(null);
+      setActivePage(pageId);
+    }
+    window.addEventListener("vault:navigate", handleAiNavigation);
+    return () => window.removeEventListener("vault:navigate", handleAiNavigation);
+  }, []);
 
   async function refreshActivity() {
     try {
@@ -153,7 +185,12 @@ function Dashboard() {
 
   function openNotifications() {
     markNotificationsRead();
-    setActivePage("activity");
+    navigate("activity");
+  }
+
+  function navigate(page) {
+    setPageInteractionContext(null);
+    setActivePage(page);
   }
 
   function markNotificationsRead() {
@@ -181,12 +218,38 @@ function Dashboard() {
     setEmailAddresses(addresses);
   }, []);
 
+  const handlePageContextChange = useCallback((context) => {
+    setPageInteractionContext(context);
+  }, []);
+
   const unreadActivity = activity.filter(
     (item) =>
       !notificationsReadAt ||
       new Date(`${item.created_at}Z`) > new Date(notificationsReadAt),
   );
   const notificationLevel = getNotificationLevel(apiHealthy, unreadActivity);
+  const pageContext = {
+    pageId: activePage,
+    pageTitle: pageTitles[activePage] || "Dashboard",
+    accountCount: accounts.length,
+    emailAddressCount: emailAddresses.length,
+    receivedEmailCount: emailAddresses.reduce(
+      (sum, address) => sum + Number(address.messageCount || 0),
+      0,
+    ),
+    unreadEmailCount: emailAddresses.reduce(
+      (sum, address) => sum + Number(address.unreadCount || 0),
+      0,
+    ),
+    emailStorageBytes: emailAddresses.reduce(
+      (sum, address) => sum + Number(address.storageBytes || 0),
+      0,
+    ),
+    unreadActivityCount: unreadActivity.length,
+    activityCount: activity.length,
+    apiHealthy,
+    interaction: pageInteractionContext,
+  };
   function renderActivePage() {
     switch (activePage) {
       case "accounts":
@@ -197,6 +260,7 @@ function Dashboard() {
             onAddAccount={() => setAccountModalOpen(true)}
             onDelete={setAccountToDelete}
             onAccountUpdated={handleAccountUpdated}
+            onContextChange={handlePageContextChange}
           />
         );
       case "vault":
@@ -223,6 +287,7 @@ function Dashboard() {
             loading={loading}
             notificationsReadAt={notificationsReadAt}
             onMarkAllRead={markNotificationsRead}
+            onContextChange={handlePageContextChange}
           />
         );
       case "backup":
@@ -244,7 +309,7 @@ function Dashboard() {
             apiHealthy={apiHealthy}
             user={user}
             emailAddresses={emailAddresses}
-            onNavigate={setActivePage}
+            onNavigate={navigate}
             onAddAccount={() => setAccountModalOpen(true)}
           />
         );
@@ -255,12 +320,18 @@ function Dashboard() {
     <main
       className={`dashboard-shell theme-${theme} min-h-screen text-slate-100`}
     >
-      <Sidebar
+      <DesktopSidebar
+        activePage={activePage}
+        user={user}
+        onNavigate={navigate}
+        onLogout={() => setLogoutOpen(true)}
+      />
+      <MobileDrawer
         activePage={activePage}
         user={user}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
-        onNavigate={setActivePage}
+        onNavigate={navigate}
         onLogout={() => setLogoutOpen(true)}
       />
       <div className="lg:pl-[256px]">
@@ -270,18 +341,22 @@ function Dashboard() {
           notificationLevel={notificationLevel}
           onMenuOpen={() => setMenuOpen(true)}
           onNotifications={openNotifications}
-          onNavigate={setActivePage}
+          onNavigate={navigate}
           onLogout={() => setLogoutOpen(true)}
         />
         <div className="dashboard-content mx-auto max-w-[1440px] px-4 py-5 sm:px-7 sm:py-6">
           {activePage !== "chat-ai" && renderActivePage()}
-          {(chatInitialized || activePage === "chat-ai") && (
-            <div className={activePage === "chat-ai" ? "" : "hidden"} aria-hidden={activePage !== "chat-ai"}>
-              <ChatAiView />
-            </div>
-          )}
+          <FloatingAiChat
+            fullPage={activePage === "chat-ai"}
+            pageContext={pageContext}
+          />
         </div>
       </div>
+      <MobileNavigation
+        activePage={activePage}
+        onNavigate={navigate}
+        onMore={() => setMenuOpen(true)}
+      />
 
       {accountModalOpen && (
         <AccountModal
@@ -293,8 +368,9 @@ function Dashboard() {
         <Modal
           title="Delete secured account?"
           onClose={() => !deletingAccount && setAccountToDelete(null)}
+          className="account-delete-modal account-modal-sheet"
         >
-          <div className="mt-5 flex gap-4 rounded-xl border border-red-400/15 bg-red-400/[0.05] p-4">
+          <div className="account-delete-summary mt-5 flex gap-4 rounded-xl border border-red-400/15 bg-red-400/[0.05] p-4">
             <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-red-400/10 text-red-300">
               <Trash2 className="size-5" />
             </span>
@@ -305,11 +381,11 @@ function Dashboard() {
               </p>
             </div>
           </div>
-          <p className="mt-4 text-sm leading-relaxed text-slate-400">
+          <p className="account-delete-message mt-4 text-sm leading-relaxed text-slate-400">
             This permanently removes the encrypted credentials. This action
             cannot be undone.
           </p>
-          <div className="mt-7 grid grid-cols-2 gap-3 sm:flex sm:justify-end">
+          <div className="account-delete-actions mt-7 grid grid-cols-2 gap-3 sm:flex sm:justify-end">
             <button
               type="button"
               disabled={deletingAccount}

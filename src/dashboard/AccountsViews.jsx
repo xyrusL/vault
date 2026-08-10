@@ -18,6 +18,7 @@ import {
   Briefcase,
   CalendarClock,
   Check,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
@@ -45,6 +46,7 @@ import {
   ShieldCheck,
   Sparkles,
   Trash2,
+  Zap,
   X,
 } from "lucide-react";
 import { apiFetch } from "../api";
@@ -128,6 +130,12 @@ const serviceLoginUrls = {
   Maya: "https://maya.ph",
 };
 const accountsPerPage = 8;
+const accountSortOptions = [
+  { value: "recent", label: "Recently added" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "name", label: "Name A-Z" },
+  { value: "expiry", label: "Expiring first" },
+];
 const emailActivityRanges = [
   { value: "1", label: "Today" },
   { value: "7", label: "Last 7 days" },
@@ -180,23 +188,34 @@ export function DashboardOverview({
   return (
     <section className="dashboard-overview">
       <h2 className="sr-only">Welcome back, {user?.displayName || "Admin"}</h2>
+      <div className="dashboard-mobile-intro mb-5 hidden">
+        <h1 className="text-2xl font-semibold tracking-[-0.035em] text-white">Dashboard</h1>
+        <p className="mt-1.5 text-sm text-slate-400">Overview of your vault and system activity</p>
+      </div>
       <div>
         <Metrics accounts={accounts} />
       </div>
       <div className="overview-panel mt-5 p-4 sm:p-5">
-        <h2 className="overview-heading">Email overview</h2>
+        <div className="flex items-center justify-between gap-4">
+          <h2 className="overview-heading">Email overview</h2>
+          <button type="button" onClick={() => onNavigate("email-generator")} className="dashboard-overview-link hidden items-center gap-1.5 text-xs text-cyan-300">View all <ChevronRight className="size-4" /></button>
+        </div>
         <div className="mt-4"><EmailMetrics addresses={emailAddresses} /></div>
       </div>
-      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(250px,.8fr)]">
+      <div className="dashboard-overview-grid mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="dashboard-insights-grid grid gap-5 lg:grid-cols-[minmax(0,1.4fr)_minmax(250px,.8fr)]">
           <EmailActivityChart />
-          <div className="overview-panel p-5">
-            <h2 className="text-base font-semibold">Vault status</h2>
-            <div className="mt-6 space-y-6">
-              <StatusItem icon={apiHealthy ? CheckCircle2 : ShieldAlert} tone={apiHealthy ? "text-emerald-300" : "text-red-400"} text={apiHealthy ? "D1 and API connected" : "API connection needs attention"} />
-              <StatusItem icon={ShieldCheck} tone="text-cyan-300" text="Encryption active" />
-              <StatusItem icon={Activity} tone="text-violet-300" text={`${activity.length} logged events`} />
+          <div className="dashboard-status-stack grid gap-5">
+            <div className="overview-panel p-5">
+              <h2 className="text-base font-semibold">Vault status</h2>
+              <div className="mt-6 space-y-6">
+                <StatusItem icon={apiHealthy ? CheckCircle2 : ShieldAlert} tone={apiHealthy ? "text-emerald-300" : "text-red-400"} text={apiHealthy ? "D1 and API connected" : "API connection needs attention"} />
+                <StatusItem icon={ShieldCheck} tone="text-cyan-300" text="Encryption active" />
+                <StatusItem icon={Activity} tone="text-violet-300" text={`${activity.length} logged events`} />
+              </div>
+              <button type="button" onClick={() => onNavigate("activity")} className="dashboard-status-link mt-5 hidden h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-300/40 text-xs text-cyan-300">View system details <ChevronRight className="size-4" /></button>
             </div>
+            <ExpiringSummary accounts={accounts} />
           </div>
         </div>
         <RecentActivity activity={activity} onViewAll={() => onNavigate("activity")} />
@@ -212,14 +231,18 @@ export function AccountsView({
   onAddAccount,
   onDelete,
   onAccountUpdated,
+  onContextChange,
 }) {
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [sortBy, setSortBy] = useState("recent");
+  const [sortOpen, setSortOpen] = useState(false);
   const [authenticatorEntries, setAuthenticatorEntries] = useState([]);
   const [authenticatorNow, setAuthenticatorNow] = useState(Date.now());
   const deferredQuery = useDeferredValue(searchQuery.trim().toLowerCase());
+  const sortedAccounts = [...accounts].sort((first, second) => compareAccounts(first, second, sortBy));
   const filteredAccounts = deferredQuery
-    ? accounts
+    ? sortedAccounts
         .map((account, index) => ({
           account,
           index,
@@ -231,11 +254,13 @@ export function AccountsView({
             first.rank - second.rank || first.index - second.index,
         )
         .map((result) => result.account)
-    : accounts;
+    : sortedAccounts;
   const authenticatorByAccount = useMemo(() => new Map(accounts.map((account) => [
     account.id,
     findMatchingAuthenticator(account, authenticatorEntries),
   ])), [accounts, authenticatorEntries]);
+  const activeAccounts = accounts.filter((account) => getEffectiveStatus(account) === "Active").length;
+  const expiringAccounts = accounts.filter((account) => getEffectiveStatus(account) === "Expiring Soon").length;
 
   useEffect(() => {
     let active = true;
@@ -250,10 +275,32 @@ export function AccountsView({
     };
   }, []);
 
+  useEffect(() => {
+    onContextChange?.({
+      searchQuery,
+      matchingAccountCount: filteredAccounts.length,
+      selectedAccount: selectedAccount ? {
+        id: selectedAccount.id,
+        label: selectedAccount.label,
+        platform: selectedAccount.platform,
+        email: selectedAccount.email,
+        username: selectedAccount.username,
+        hasPassword: Boolean(selectedAccount.hasPassword ?? selectedAccount.has_password),
+      } : null,
+    });
+    return () => onContextChange?.(null);
+  }, [filteredAccounts.length, onContextChange, searchQuery, selectedAccount]);
+
   return (
     <>
-      <section>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <section className="accounts-page">
+        <div className="accounts-mobile-summary sm:hidden">
+          <MobileAccountMetric icon={KeyRound} label="Total Accounts" value={accounts.length} detail="All accounts" tone="cyan" />
+          <MobileAccountMetric icon={ShieldCheck} label="Active" value={activeAccounts} detail="Healthy" tone="green" />
+          <MobileAccountMetric icon={CalendarClock} label="Expiring Soon" value={expiringAccounts} detail="Within 5 days" tone="orange" />
+        </div>
+        <div className="accounts-toolbar flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="accounts-mobile-search sm:contents">
           <label className="group flex h-11 w-full max-w-md items-center gap-3 rounded-xl border border-white/10 bg-white/[0.025] px-4 text-slate-500 transition focus-within:border-cyan-300/50 focus-within:bg-cyan-300/[0.03] focus-within:text-cyan-300">
             <Search className="size-4 shrink-0" aria-hidden="true" />
             <input
@@ -275,6 +322,7 @@ export function AccountsView({
               </button>
             )}
           </label>
+          </div>
           <div className="flex items-center justify-between gap-3 sm:justify-end">
             {deferredQuery && (
               <p className="text-xs text-slate-500" aria-live="polite">
@@ -282,12 +330,42 @@ export function AccountsView({
                 {filteredAccounts.length === 1 ? "" : "s"}
               </p>
             )}
-            <button type="button" onClick={onAddAccount} className="flex h-11 shrink-0 items-center gap-2 rounded-lg bg-cyan-500 px-5 text-sm font-semibold text-[#021012]">
+            <button type="button" onClick={onAddAccount} className="hidden h-11 shrink-0 items-center gap-2 rounded-lg bg-cyan-500 px-5 text-sm font-semibold text-[#021012] sm:flex">
               <Plus className="size-4" /> Add account
             </button>
           </div>
         </div>
-        <div className="panel mt-4 !p-0">
+        <div className="accounts-mobile-list-heading sm:hidden">
+          <h2>Your Accounts</h2>
+          <div className="accounts-sort-control">
+            <button type="button" onClick={() => setSortOpen((open) => !open)} aria-expanded={sortOpen} aria-haspopup="listbox">
+              <span>Sort by:</span>
+              <strong>{accountSortOptions.find((option) => option.value === sortBy)?.label}</strong>
+              <ChevronDown className={sortOpen ? "rotate-180" : ""} />
+            </button>
+            {sortOpen && (
+              <div className="accounts-sort-menu" role="listbox" aria-label="Sort accounts">
+                {accountSortOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={sortBy === option.value}
+                    className={sortBy === option.value ? "is-active" : ""}
+                    onClick={() => {
+                      setSortBy(option.value);
+                      setSortOpen(false);
+                    }}
+                  >
+                    <span>{option.label}</span>
+                    {sortBy === option.value && <Check />}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="panel accounts-list-panel mt-4 !p-0">
           <AccountsTable
             key={deferredQuery}
             accounts={filteredAccounts}
@@ -303,6 +381,9 @@ export function AccountsView({
             }
           />
         </div>
+        <button type="button" onClick={onAddAccount} className="accounts-mobile-fab sm:hidden" aria-label="Add account">
+          <Plus />
+        </button>
       </section>
       {selectedAccount && (
         <AccountDetailsModal
@@ -312,6 +393,15 @@ export function AccountsView({
         />
       )}
     </>
+  );
+}
+
+function MobileAccountMetric({ icon: Icon, label, value, detail, tone }) {
+  return (
+    <article className={`accounts-mobile-metric is-${tone}`}>
+      <span><Icon /></span>
+      <div><p>{label}</p><strong>{value}</strong><small>{detail}</small></div>
+    </article>
   );
 }
 
@@ -394,8 +484,8 @@ export function AccountModal({ onClose, onCreated }) {
   }
 
   return (
-    <Modal title="Add secured account" onClose={onClose}>
-      <form onSubmit={submit} className="mt-6 grid gap-4 sm:grid-cols-2">
+    <Modal title="Add secured account" onClose={onClose} size="account" className="account-create-modal">
+      <form onSubmit={submit} className="account-create-form mt-6 grid gap-4 sm:grid-cols-2">
         <SelectField
           label="Category"
           name="category"
@@ -478,7 +568,7 @@ export function AccountModal({ onClose, onCreated }) {
             name="notes"
             value={form.notes}
             onChange={updateField}
-            rows="3"
+            rows="2"
             className="form-control resize-none"
             placeholder="Optional private notes"
           />
@@ -646,6 +736,7 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
       title={editing ? "Edit secured account" : "Account details"}
       onClose={onClose}
       size="wide"
+      className="account-details-modal account-modal-sheet"
       header={(
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -690,11 +781,10 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
           showPassword={showPassword}
           onPasswordVisibility={() => setShowPassword((visible) => !visible)}
           onEdit={startEditing}
-          onClose={onClose}
         />
       )}
       {!loading && details && editing && (
-        <form onSubmit={save} className="mt-5 grid gap-x-5 gap-y-3 sm:grid-cols-2">
+        <form onSubmit={save} className="account-edit-form mt-5 grid gap-x-5 gap-y-3 sm:grid-cols-2">
           <Field
             label="Platform / service"
             name="platform"
@@ -774,7 +864,7 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
               name="notes"
               value={form.notes}
               onChange={updateField}
-              rows="3"
+            rows="2"
               className="form-control resize-none"
             />
           </label>
@@ -811,12 +901,11 @@ function AccountDetails({
   showPassword,
   onPasswordVisibility,
   onEdit,
-  onClose,
 }) {
   const status = getEffectiveStatus(details);
 
   return (
-    <div className="mt-3">
+    <div className="account-details-content mt-3">
       <div className="flex justify-end">
         <button
           type="button"
@@ -901,16 +990,13 @@ function AccountDetails({
           </DetailItem>
         )}
       </div>
-      <div className="mt-4 flex justify-center">
-        <button type="button" onClick={onClose} className="h-9 rounded-lg border border-white/10 bg-white/[0.04] px-5 text-xs text-slate-300 transition hover:bg-white/[0.07] hover:text-white">Close</button>
-      </div>
     </div>
   );
 }
 
 function PrimaryDetail({ label, children, className = "" }) {
   return (
-    <div className={`rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] px-3.5 py-2.5 ${className}`}>
+    <div className={`account-primary-detail rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] px-3.5 py-2.5 ${className}`}>
       <p className="text-[11px] uppercase tracking-wider text-slate-500">
         {label}
       </p>
@@ -923,7 +1009,7 @@ function PrimaryDetail({ label, children, className = "" }) {
 
 function DetailItem({ label, children, icon: Icon, className = "" }) {
   return (
-    <div className={`flex min-h-[62px] items-center gap-3 rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] p-3 ${className}`}>
+    <div className={`account-detail-item flex min-h-[62px] items-center gap-3 rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] p-3 ${className}`}>
       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-cyan-300/[0.06] text-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.06)]">
         <Icon className="size-4" />
       </span>
@@ -935,7 +1021,7 @@ function DetailItem({ label, children, icon: Icon, className = "" }) {
   );
 }
 
-function CopyButton({ value, label, compact = false }) {
+function CopyButton({ value, label, compact = false, showText = false }) {
   const [copiedAt, setCopiedAt] = useState(0);
   const copied = copiedAt > 0;
 
@@ -961,11 +1047,12 @@ function CopyButton({ value, label, compact = false }) {
       type="button"
       onClick={handleCopy}
       disabled={!value}
-      className={`grid shrink-0 place-items-center disabled:cursor-not-allowed disabled:opacity-40 ${copied ? "text-emerald-300" : "text-slate-400 hover:text-cyan-300"} ${compact ? "inline-copy-button size-7 rounded-md hover:bg-white/5" : "size-9 rounded-lg border border-white/10 hover:border-cyan-300/30"}`}
+      className={`${showText ? "flex gap-2 px-4" : "grid"} shrink-0 place-items-center disabled:cursor-not-allowed disabled:opacity-40 ${copied ? "text-emerald-300" : "text-slate-400 hover:text-cyan-300"} ${compact ? "inline-copy-button size-7 rounded-md hover:bg-white/5" : showText ? "h-10 rounded-xl border border-white/10" : "size-9 rounded-lg border border-white/10 hover:border-cyan-300/30"}`}
       aria-label={copied ? "Copied" : label}
       title={copied ? "Copied" : label}
     >
       <span key={copied ? "copied" : "copy"} className="copy-feedback-icon">{copied ? <Check className={compact ? "size-3.5" : "size-4"} /> : <Copy className={compact ? "size-3.5" : "size-4"} />}</span>
+      {showText && <span>{copied ? "Copied" : "Copy"}</span>}
     </button>
   );
 }
@@ -1123,8 +1210,11 @@ function RecentActivity({ activity, onViewAll }) {
   const recentItems = activity.slice(0, 5);
 
   return (
-    <article className="overview-panel flex min-h-[300px] flex-col p-5">
-      <h2 className="overview-heading">Activity log</h2>
+    <article className="dashboard-recent-activity overview-panel flex min-h-[300px] flex-col p-5">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="overview-heading">Activity log</h2>
+        <button type="button" onClick={onViewAll} className="dashboard-overview-link hidden items-center gap-1.5 text-xs text-cyan-300">View all <ChevronRight className="size-4" /></button>
+      </div>
       <div className="mt-3 flex-1 divide-y divide-white/[0.055]">
         {recentItems.map((item) => {
           const detail = item.metadata?.fullAddress || item.metadata?.email || item.metadata?.platform || item.event_type;
@@ -1160,7 +1250,7 @@ function QuickAccess({ onNavigate, onAddAccount }) {
   ];
 
   return (
-    <section className="overview-panel mt-5 p-4 sm:p-5">
+    <section className="dashboard-quick-access overview-panel mt-5 p-4 sm:p-5">
       <h2 className="overview-heading">Quick access</h2>
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {actions.map(({ label, detail, icon: Icon, tone, onClick }) => (
@@ -1222,7 +1312,7 @@ function Metrics({ accounts }) {
   ];
 
   return (
-    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="dashboard-metrics-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {metrics.map(({ label, value, detail, icon: Icon, tone }) => (
         <article
           key={label}
@@ -1243,6 +1333,21 @@ function Metrics({ accounts }) {
         </article>
       ))}
     </section>
+  );
+}
+
+function ExpiringSummary({ accounts }) {
+  const expiringCount = accounts.filter(
+    (account) => getEffectiveStatus(account) === "Expiring Soon",
+  ).length;
+
+  return (
+    <article className="expiring-summary overview-panel relative overflow-hidden p-5">
+      <CalendarClock className="absolute -bottom-1 right-4 size-20 text-white/[0.08]" aria-hidden="true" />
+      <p className="relative text-sm font-semibold text-orange-300">Expiring soon</p>
+      <strong className="relative mt-2 block text-3xl tracking-[-0.04em] text-white">{expiringCount}</strong>
+      <p className="relative mt-2 text-xs text-slate-400">Within the next 5 days</p>
+    </article>
   );
 }
 
@@ -1291,7 +1396,7 @@ function EmailMetrics({ addresses }) {
   ];
 
   return (
-    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="dashboard-email-grid grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {metrics.map(({ label, value, detail, icon: Icon, tone }) => (
         <article
           key={label}
@@ -1454,17 +1559,20 @@ function AccountsTable({ accounts, loading, authenticatorByAccount, authenticato
     <div>
       <div className="divide-y divide-white/[0.06] xl:hidden">
         {visibleAccounts.map((account) => (
-          <article key={account.id} className="p-4">
+          <article key={account.id} className="account-mobile-card p-4">
             <div className="flex min-w-0 items-start gap-3">
               <AccountAvatar account={account} />
               <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-3">
+                <div className="account-mobile-head flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="truncate text-sm font-medium">
-                      {account.label}
-                    </h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="account-mobile-title truncate text-sm font-medium">{account.label}</h3>
+                      <span className={`account-mobile-status ${getEffectiveStatus(account) === "Active" ? "is-active" : ""}`}>
+                        <i className={getStatusDotTone(getEffectiveStatus(account))} /> {getEffectiveStatus(account)}
+                      </span>
+                    </div>
                     <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
-                      <span className="min-w-0 break-all">
+                      <span className="account-mobile-email min-w-0 truncate" title={account.email || account.username || "No identity"}>
                         {account.email || account.username || "No identity"}
                       </span>
                       <CopyButton
@@ -1474,27 +1582,17 @@ function AccountsTable({ accounts, loading, authenticatorByAccount, authenticato
                       />
                     </div>
                   </div>
-                  <span
-                    className={`shrink-0 text-xs ${getStatusTone(getEffectiveStatus(account))}`}
-                  >
-                    {getEffectiveStatus(account)}
-                  </span>
+                  <span className="account-mobile-expiry"><Zap /> {formatExpiry(account, true)}</span>
                 </div>
-                <div className="mt-4 flex flex-wrap items-end justify-between gap-3">
-                  <div>
-                    <span className="rounded bg-cyan-400/8 px-2 py-1 text-xs text-cyan-300">
-                      {account.platform || "Custom"}
-                    </span>
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      {formatExpiry(account, true)}
-                    </p>
-                    {authenticatorByAccount.get(account.id) && <VerificationCode entry={authenticatorByAccount.get(account.id)} now={authenticatorNow} compact />}
-                  </div>
-                  <AccountActions
-                    account={account}
-                    onDelete={onDelete}
-                    onView={onView}
-                  />
+                <div className="account-mobile-code">
+                  {authenticatorByAccount.get(account.id)
+                    ? <VerificationCode entry={authenticatorByAccount.get(account.id)} now={authenticatorNow} compact />
+                    : <span>No verification code</span>}
+                </div>
+                <div className="account-mobile-actions">
+                  <CopyButton value={account.email || account.username || ""} label="Copy identity" showText />
+                  <button type="button" onClick={() => onView(account)}><Eye /> View</button>
+                  <button type="button" className="is-delete" onClick={() => onDelete(account)}><Trash2 /> Delete</button>
                 </div>
               </div>
             </div>
@@ -1609,7 +1707,7 @@ function AccountPagination({
   const pageItems = getVisiblePageItems(currentPage, totalPages);
 
   return (
-    <footer className="flex flex-col items-center justify-between gap-3 border-t border-white/[0.07] p-4 sm:flex-row sm:px-5">
+    <footer className="account-pagination flex flex-col items-center justify-between gap-3 border-t border-white/[0.07] p-4 sm:flex-row sm:px-5">
       <p className="text-xs text-slate-500">
         Showing {firstAccountIndex + 1}-{firstAccountIndex + visibleCount} of{" "}
         {totalAccounts} accounts
@@ -1750,6 +1848,21 @@ function getAccountSearchRank(account, query) {
       .toLowerCase()
       .startsWith(query),
   );
+}
+
+function compareAccounts(first, second, sortBy) {
+  if (sortBy === "name") {
+    return String(first.label || first.platform || "").localeCompare(String(second.label || second.platform || ""));
+  }
+  if (sortBy === "expiry") {
+    const firstExpiry = first.expires_at ? new Date(first.expires_at).getTime() : Number.POSITIVE_INFINITY;
+    const secondExpiry = second.expires_at ? new Date(second.expires_at).getTime() : Number.POSITIVE_INFINITY;
+    return firstExpiry - secondExpiry;
+  }
+
+  const firstCreated = new Date(first.created_at || 0).getTime();
+  const secondCreated = new Date(second.created_at || 0).getTime();
+  return sortBy === "oldest" ? firstCreated - secondCreated : secondCreated - firstCreated;
 }
 
 function hashString(value) {

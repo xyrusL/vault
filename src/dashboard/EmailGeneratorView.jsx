@@ -91,6 +91,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   const inboxRowsPerPage = 6;
 
   const messageTotal = addresses.reduce((sum, item) => sum + item.messageCount, 0);
+  const unreadTotal = addresses.reduce((sum, item) => sum + item.unreadCount, 0);
   const domainOptions = domains.map((domain) => ({
     value: domain.id,
     label: domain.hostname,
@@ -547,13 +548,13 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   if (inboxAddress) {
     return (
       <div className="email-inbox-page flex min-h-0 flex-col pb-4">
-        <div className="shrink-0 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+        <div className="email-inbox-header shrink-0 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
           <div className="min-w-0">
             <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-cyan-300">Email generator</p>
             <button type="button" onClick={closeInbox} className="mt-2 flex items-center gap-2 text-2xl font-semibold text-white transition hover:text-cyan-200">
               <ArrowLeft className="size-5" /> Inbox
             </button>
-            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
+            <div className="email-inbox-address mt-2 flex min-w-0 flex-wrap items-center gap-2 text-sm text-slate-400">
               <span className="truncate">{inboxAddress.fullAddress}</span>
               <button type="button" onClick={() => copyAddress(inboxAddress)} className="grid size-7 place-items-center rounded-md text-slate-500 transition hover:bg-white/5 hover:text-cyan-300" aria-label={`Copy ${inboxAddress.fullAddress}`}>
                 {copiedId === inboxAddress.id ? <Check className="size-4" /> : <Copy className="size-4" />}
@@ -563,7 +564,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
               </span>
             </div>
           </div>
-          <button type="button" onClick={() => openAddressDetails(inboxAddress)} className="flex min-h-10 items-center justify-center gap-2 rounded-lg border border-cyan-100/10 px-3 text-xs text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/[0.04]">
+          <button type="button" onClick={() => openAddressDetails(inboxAddress)} className="email-inbox-settings flex min-h-10 items-center justify-center gap-2 rounded-lg border border-cyan-100/10 px-3 text-xs text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/[0.04]">
             <Settings2 className="size-4" /> Address settings
           </button>
         </div>
@@ -572,9 +573,9 @@ export default function EmailGeneratorView({ onAddressesChange }) {
           <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${error ? "border-red-400/20 bg-red-400/[0.06] text-red-300" : "border-cyan-300/20 bg-cyan-300/[0.06] text-cyan-200"}`} role={error ? "alert" : "status"}>{error || notice}</div>
         )}
 
-        <section className="mt-4 flex min-h-0 flex-1 overflow-hidden rounded-xl border border-cyan-100/10 bg-gradient-to-br from-[#07151c]/85 to-[#040c12]/95 lg:grid lg:grid-cols-[400px_minmax(0,1fr)]">
+        <section className="email-inbox-workspace mt-4 flex min-h-0 flex-1 overflow-hidden rounded-xl border border-cyan-100/10 bg-gradient-to-br from-[#07151c]/85 to-[#040c12]/95 lg:grid lg:grid-cols-[400px_minmax(0,1fr)]">
           <aside className={`${selectedMessage ? "hidden lg:flex" : "flex"} min-h-0 flex-col border-cyan-100/10 lg:border-r`}>
-            <div className="flex shrink-0 items-center gap-2 border-b border-cyan-100/10 p-3">
+            <div className="email-inbox-toolbar flex shrink-0 items-center gap-2 border-b border-cyan-100/10 p-3">
               <SelectionCheckbox checked={pagedInboxMessages.length > 0 && pagedInboxMessages.every((message) => selectedInboxMessageIds.includes(message.id))} onChange={toggleInboxPageSelection} label="Select all messages on this page" />
               <button type="button" onClick={refreshInbox} disabled={messagesLoading} className="grid size-9 shrink-0 place-items-center rounded-lg border border-white/10 text-slate-400 transition hover:border-cyan-300/25 hover:text-cyan-300 disabled:opacity-50" aria-label="Refresh inbox"><RefreshCw className={`size-4 ${messagesLoading ? "animate-spin" : ""}`} /></button>
               <label className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-cyan-100/10 bg-[#030c11] px-3 text-slate-500 transition focus-within:border-cyan-300/45"><Search className="size-4" /><input value={inboxSearch} onChange={(event) => setInboxSearch(event.target.value)} className="min-h-9 min-w-0 flex-1 bg-transparent text-xs text-slate-200 outline-none placeholder:text-slate-600" placeholder="Search..." aria-label="Search inbox messages" /></label>
@@ -586,13 +587,13 @@ export default function EmailGeneratorView({ onAddressesChange }) {
                 <button type="button" onClick={() => setMessagesToDelete(messages.filter((message) => selectedInboxMessageIds.includes(message.id)))} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.7rem] text-rose-300 transition hover:bg-rose-400/[0.07]"><Trash2 className="size-3.5" /> Delete</button>
               </div>
             )}
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="email-inbox-list min-h-0 flex-1 overflow-y-auto">
               {messagesLoading ? <p className="p-5 text-xs text-slate-500">Loading inbox...</p> : !inboxMessages.length ? (
                 <div className="grid min-h-52 place-items-center p-6 text-center"><div><Inbox className="mx-auto size-5 text-cyan-300" /><p className="mt-3 text-sm text-slate-300">{inboxSearch ? "No messages match your search" : "No messages received yet"}</p><p className="mt-1 text-xs text-slate-600">{inboxSearch ? "Try a different sender or subject." : "New messages will appear here."}</p></div></div>
               ) : pagedInboxMessages.map((message) => {
                 const active = selectedMessage?.id === message.id;
                 return (
-                  <div key={message.id} className={`relative flex items-start gap-3 border-b border-cyan-100/[0.07] px-4 py-3 transition before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-cyan-300 ${active ? "bg-cyan-300/[0.08] before:opacity-100" : "hover:bg-cyan-300/[0.025] before:opacity-0"}`}>
+                  <div key={message.id} className={`email-inbox-message relative flex items-start gap-3 border-b border-cyan-100/[0.07] px-4 py-3 transition before:absolute before:inset-y-0 before:left-0 before:w-0.5 before:bg-cyan-300 ${active ? "bg-cyan-300/[0.08] before:opacity-100" : "hover:bg-cyan-300/[0.025] before:opacity-0"}`}>
                     <SelectionCheckbox checked={selectedInboxMessageIds.includes(message.id)} onChange={() => toggleInboxMessageSelection(message.id)} label={`Select ${message.subject || "message"}`} />
                     <button type="button" onClick={() => openMessage(message.id)} className="min-w-0 flex-1 text-left">
                       <span className="flex items-center justify-between gap-3"><span className={`truncate text-xs ${message.readAt ? "text-slate-300" : "font-semibold text-white"}`}>{message.sender}</span><span className="shrink-0 text-[0.65rem] text-slate-500">{formatTime(message.receivedAt)}</span></span>
@@ -611,12 +612,12 @@ export default function EmailGeneratorView({ onAddressesChange }) {
 
           <div className={`${selectedMessage ? "block" : "hidden lg:block"} min-h-0 min-w-0 overflow-y-auto`}>
             {selectedMessage ? (
-              <article className="min-h-full p-5 sm:p-6">
+              <article className="email-inbox-reader min-h-full p-5 sm:p-6">
                 <button type="button" onClick={() => setSelectedMessage(null)} className="mb-4 flex items-center gap-2 text-xs text-slate-400 transition hover:text-cyan-300 lg:hidden"><ArrowLeft className="size-4" /> Messages</button>
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex min-w-0 flex-wrap items-center gap-3"><h2 className="break-words text-xl font-semibold text-white">{selectedMessage.subject || "(No subject)"}</h2>{!selectedMessage.readAt && <span className="rounded-full bg-cyan-300/10 px-2.5 py-1 text-xs text-cyan-200">Unread</span>}</div>
                 </div>
-                <div className="mt-6 flex items-center gap-4 border-b border-cyan-100/10 pb-6">
+                <div className="email-inbox-reader-sender mt-6 flex items-center gap-4 border-b border-cyan-100/10 pb-6">
                   <span className="grid size-12 shrink-0 place-items-center rounded-full bg-cyan-300/10 text-lg font-semibold text-cyan-300">{selectedMessage.sender?.[0]?.toUpperCase() || "M"}</span>
                   <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold text-slate-100">{selectedMessage.sender}</p><p className="mt-1 truncate text-xs text-slate-400">To: {selectedMessage.recipient}</p><p className="mt-2 text-xs text-slate-400">{formatDate(selectedMessage.receivedAt)}</p></div>
                   <button type="button" onClick={() => setMessagesToDelete([selectedMessage])} className="grid size-9 place-items-center rounded-lg text-slate-400 hover:bg-rose-400/[0.07] hover:text-rose-300" aria-label="Delete message"><Trash2 className="size-4" /></button>
@@ -640,7 +641,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
         )}
 
         {addressDetails && (
-          <Modal title="Email address details" onClose={() => !detailsSaving && setAddressDetails(null)}>
+          <Modal title="Email address details" onClose={() => !detailsSaving && setAddressDetails(null)} className="email-address-details-modal">
             <div className="mt-4 rounded-xl border border-cyan-100/10 bg-[#071219] p-4"><p className="break-all text-sm font-semibold text-white">{addressDetails.fullAddress}</p><div className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><p className="text-slate-500">Created</p><p className="mt-1 text-slate-300">{formatDate(addressDetails.createdAt)}</p></div><div><p className="text-slate-500">Storage used</p><p className="mt-1 text-slate-300">{formatBytes(addressDetails.storageBytes || 0)}</p></div></div></div>
             <div className="mt-4"><p className="text-xs font-medium text-slate-300">Delivery</p><div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-[#071219] p-1 text-xs"><button type="button" onClick={() => { setAddressDetails((current) => ({ ...current, deliveryMode: "vault" })); setDetailsFeedback(null); }} className={`rounded-md px-3 py-2 ${addressDetails.deliveryMode === "vault" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Save in Vault</button><button type="button" onClick={() => { setAddressDetails((current) => ({ ...current, deliveryMode: "forward" })); setDetailsFeedback(null); }} disabled={!forwardingAvailable || !forwardingDestinations.length} className={`rounded-md px-3 py-2 disabled:opacity-40 ${addressDetails.deliveryMode === "forward" ? "bg-cyan-300/15 text-cyan-200" : "text-slate-400"}`}>Forward real email</button></div>{addressDetails.deliveryMode === "forward" ? <><SelectField name="forwardDestinationId" value={forwardDestinationId} onChange={(event) => { setForwardDestinationId(event.target.value); setDetailsFeedback(null); }} options={forwardingOptions} ariaLabel="Forward to" className="mt-3 min-h-10 text-xs" /><p className="mt-2 text-[0.68rem] leading-5 text-slate-500">New mail is forwarded by the Vault Worker and is not stored. Earlier Vault messages remain available.</p></> : <p className="mt-3 text-xs text-slate-500">New mail will be stored in this Vault inbox.</p>}</div>
             {detailsFeedback && <div className={`mt-4 rounded-lg border px-3 py-2.5 text-xs ${detailsFeedback.type === "success" ? "border-emerald-300/20 bg-emerald-300/[0.06] text-emerald-200" : "border-red-400/20 bg-red-400/[0.06] text-red-300"}`} role={detailsFeedback.type === "error" ? "alert" : "status"}>{detailsFeedback.message}</div>}
@@ -652,16 +653,24 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   }
 
   return (
-    <div>
-      <div className="flex flex-wrap justify-end gap-2.5">
-        <div className="flex min-w-[150px] items-center justify-between gap-3 rounded-lg border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 px-3 py-1.5 shadow-[inset_0_1px_rgba(255,255,255,0.015)] max-md:w-full">
+    <div className="email-generator-page">
+      <div className="email-generator-summary flex flex-wrap justify-end gap-2.5">
+        <div className="email-summary-metric flex min-w-[150px] items-center justify-between gap-3 rounded-lg border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 px-3 py-1.5 shadow-[inset_0_1px_rgba(255,255,255,0.015)]">
           <div>
             <p className="text-[0.68rem] text-slate-400">Total generated</p>
             <p className="text-base font-semibold leading-5">{addresses.length}</p>
           </div>
           <span className="grid size-8 place-items-center rounded-lg bg-cyan-400/10 text-cyan-300"><Mail className="size-4" /></span>
         </div>
-        <button type="button" onClick={() => { setGeneratorOpen(true); setForwardingVerificationNotice(""); loadForwardingDestinations(); }} className="flex h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-cyan-400 via-cyan-400 to-sky-500 px-3.5 text-xs font-bold text-[#001217] shadow-[0_10px_28px_rgba(13,192,220,0.12)] transition hover:-translate-y-px hover:brightness-110 max-md:w-full">
+        <div className="email-summary-metric email-summary-mobile hidden min-w-[150px] items-center justify-between gap-3 rounded-lg border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 px-3 py-1.5 md:flex">
+          <div><p className="text-[0.68rem] text-slate-400">Messages</p><p className="text-base font-semibold leading-5">{messageTotal}</p></div>
+          <span className="grid size-8 place-items-center rounded-lg bg-sky-400/10 text-sky-300"><Inbox className="size-4" /></span>
+        </div>
+        <div className="email-summary-metric email-summary-mobile hidden min-w-[150px] items-center justify-between gap-3 rounded-lg border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 px-3 py-1.5 md:flex">
+          <div><p className="text-[0.68rem] text-slate-400">Unread</p><p className="text-base font-semibold leading-5">{unreadTotal}</p></div>
+          <span className="grid size-8 place-items-center rounded-lg bg-emerald-400/10 text-emerald-300"><Mail className="size-4" /></span>
+        </div>
+        <button type="button" onClick={() => { setGeneratorOpen(true); setForwardingVerificationNotice(""); loadForwardingDestinations(); }} className="email-generate-button flex h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-cyan-400 via-cyan-400 to-sky-500 px-3.5 text-xs font-bold text-[#001217] shadow-[0_10px_28px_rgba(13,192,220,0.12)] transition hover:-translate-y-px hover:brightness-110">
           <span className="text-base leading-none">+</span> Generate new email
         </button>
       </div>
@@ -673,8 +682,8 @@ export default function EmailGeneratorView({ onAddressesChange }) {
       )}
 
       {generatorOpen && (
-        <div className="fixed inset-0 z-[80] grid place-items-center overflow-y-auto bg-black/45 p-4" onMouseDown={() => setGeneratorOpen(false)}>
-          <form className="w-full max-w-[520px] overflow-visible rounded-xl border border-cyan-100/15 bg-[#0b1820] p-4 shadow-[0_18px_50px_rgba(0,0,0,0.35)]" onSubmit={generateAddresses} onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="email-generator-modal-title">
+        <div className="email-generator-modal-layer fixed inset-0 z-[80] grid place-items-center overflow-y-auto bg-black/45 p-4" onMouseDown={() => setGeneratorOpen(false)}>
+          <form className="email-generator-modal w-full max-w-[520px] overflow-visible rounded-xl border border-cyan-100/15 bg-[#0b1820] p-4 shadow-[0_18px_50px_rgba(0,0,0,0.35)]" onSubmit={generateAddresses} onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="email-generator-modal-title">
             <div className="flex items-center justify-between gap-3">
               <h2 id="email-generator-modal-title" className="text-sm font-semibold text-white">Generate new email</h2>
               <button type="button" onClick={() => setGeneratorOpen(false)} className="grid size-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/[0.06] hover:text-white" aria-label="Close generator">
@@ -683,7 +692,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
             </div>
 
             <div className="mt-4 space-y-3">
-              <div className="grid grid-cols-[minmax(260px,1fr)_190px] gap-2">
+              <div className="email-generator-fields grid grid-cols-[minmax(260px,1fr)_190px] gap-2">
                 <label className="block min-w-0 text-xs font-medium text-slate-300">
                   <span className="mb-1.5 block">Prefix</span>
                   <span className="flex min-h-[42px] items-center rounded-lg border border-cyan-100/15 bg-[#071219] transition focus-within:border-cyan-300/55">
@@ -710,7 +719,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
 
               <div className="rounded-lg border border-cyan-100/10 bg-[#071219] p-3">
                 <p className="text-[0.7rem] font-medium text-slate-300">Add forwarding destination</p>
-                <div className="mt-2 flex gap-2">
+                <div className="email-forwarding-controls mt-2 flex gap-2">
                   <input type="email" value={forwardingEmail} onChange={(event) => setForwardingEmail(event.target.value)} placeholder="you@example.com" className="min-h-9 min-w-0 flex-1 rounded-lg border border-cyan-100/15 bg-[#040d12] px-3 text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/55" />
                   <button type="button" onClick={addForwardingDestination} disabled={forwardingVerificationSubmitting || !forwardingEmail.trim()} className="min-h-9 shrink-0 rounded-lg border border-cyan-300/25 px-3 text-xs text-cyan-200 transition hover:bg-cyan-300/[0.06] disabled:opacity-40">{forwardingVerificationSubmitting ? "Sending..." : "Verify"}</button>
                   <button type="button" onClick={loadForwardingDestinations} className="grid size-9 shrink-0 place-items-center rounded-lg border border-cyan-100/15 text-slate-400 transition hover:text-cyan-300" aria-label="Refresh verified forwarding destinations"><RefreshCw className="size-4" /></button>
@@ -729,7 +738,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
       )}
 
       {addressDetails && (
-        <Modal title="Email address details" onClose={() => !detailsSaving && setAddressDetails(null)}>
+        <Modal title="Email address details" onClose={() => !detailsSaving && setAddressDetails(null)} className="email-address-details-modal">
           <div className="mt-4 rounded-xl border border-cyan-100/10 bg-[#071219] p-4">
             <p className="break-all text-sm font-semibold text-white">{addressDetails.fullAddress}</p>
             <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
@@ -786,20 +795,21 @@ export default function EmailGeneratorView({ onAddressesChange }) {
         </Modal>
       )}
 
-      <section className="mt-7 overflow-hidden rounded-xl border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 shadow-[inset_0_1px_rgba(255,255,255,0.015)]">
-        <div className="flex flex-col items-stretch justify-between gap-4 border-b border-cyan-100/10 px-4 pb-4 sm:flex-row sm:items-center sm:px-5 sm:pb-0">
-          <div className="flex min-w-0 flex-wrap gap-6">
+      <section className="email-generator-results mt-7 overflow-hidden rounded-xl border border-cyan-100/10 bg-gradient-to-br from-[#0e222b]/40 to-[#040d12]/70 shadow-[inset_0_1px_rgba(255,255,255,0.015)]">
+        <div className="email-results-toolbar flex flex-col items-stretch justify-between gap-4 border-b border-cyan-100/10 px-4 pb-4 sm:flex-row sm:items-center sm:px-5 sm:pb-0">
+          <div className="email-results-tabs flex min-w-0 flex-wrap gap-6">
             <button type="button" onClick={() => setActiveTab("addresses")} className={`relative flex min-h-12 shrink-0 items-center gap-2 text-sm font-medium transition after:absolute after:inset-x-0 after:bottom-[-1px] after:h-0.5 after:rounded-full after:bg-cyan-300 after:transition ${activeTab === "addresses" ? "text-cyan-300 after:opacity-100" : "text-slate-400 after:opacity-0"}`}>Generated emails <span className={`rounded-full px-2 py-0.5 text-[0.68rem] ${activeTab === "addresses" ? "bg-cyan-300/20 text-cyan-100" : "bg-slate-400/10 text-slate-400"}`}>{addresses.length}</span></button>
             <button type="button" onClick={() => setActiveTab("history")} className={`relative flex min-h-12 shrink-0 items-center gap-2 text-sm font-medium transition after:absolute after:inset-x-0 after:bottom-[-1px] after:h-0.5 after:rounded-full after:bg-cyan-300 after:transition ${activeTab === "history" ? "text-cyan-300 after:opacity-100" : "text-slate-400 after:opacity-0"}`}>History <span className={`rounded-full px-2 py-0.5 text-[0.68rem] ${activeTab === "history" ? "bg-cyan-300/20 text-cyan-100" : "bg-slate-400/10 text-slate-400"}`}>{messageTotal}</span></button>
           </div>
           <div className="flex w-full gap-2 sm:w-auto">
             {selectedAddressIds.length > 0 && <button type="button" onClick={() => setAddressesToDelete(addresses.filter((address) => selectedAddressIds.includes(address.id)))} className="flex min-h-10 shrink-0 items-center gap-2 rounded-lg border border-rose-400/25 px-3 text-xs font-medium text-rose-300 transition hover:bg-rose-400/[0.07]"><Trash2 className="size-4" />Delete {selectedAddressIds.length}</button>}
-            <label className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-cyan-100/10 bg-[#071219] px-3 text-slate-500 transition focus-within:border-cyan-300/55 focus-within:shadow-[0_0_0_3px_rgba(22,217,227,0.07)] sm:min-w-[280px]"><Search className="size-4" /><input className="min-h-10 min-w-0 flex-1 bg-transparent text-[0.8rem] text-slate-200 outline-none placeholder:text-slate-600" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search email address..." aria-label="Search generated emails" /></label>
+            {activeTab === "addresses" && <label className="email-address-search flex min-w-0 flex-1 items-center gap-2.5 rounded-lg border border-cyan-100/10 bg-[#071219] px-3 text-slate-500 transition focus-within:border-cyan-300/55 focus-within:shadow-[0_0_0_3px_rgba(22,217,227,0.07)] sm:min-w-[280px]"><Search className="size-4" /><input className="min-h-10 min-w-0 flex-1 bg-transparent text-[0.8rem] text-slate-200 outline-none placeholder:text-slate-600" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search email address..." aria-label="Search generated emails" /></label>}
           </div>
         </div>
 
         {activeTab === "addresses" ? (
-          <div className="overflow-x-auto">
+          <>
+          <div className="email-address-desktop-list hidden overflow-x-auto md:block">
             <div className="min-w-[760px]">
               <div className="grid min-h-11 grid-cols-[28px_minmax(300px,1.8fr)_minmax(130px,0.65fr)_minmax(175px,0.8fr)_minmax(130px,0.65fr)] items-center gap-4 border-b border-cyan-100/10 px-5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-slate-500"><SelectionCheckbox checked={pagedAddresses.length > 0 && pagedAddresses.every((address) => selectedAddressIds.includes(address.id))} onChange={togglePageSelection} label="Select all email addresses on this page" /><span>Email address</span><span>Messages</span><span>Created</span><span className="text-right">Actions</span></div>
               {loading ? <p className="p-6 text-sm text-slate-400">Loading addresses...</p> : !filteredAddresses.length ? <p className="p-6 text-sm text-slate-400">No matching addresses. Generate your first address above.</p> : pagedAddresses.map((address) => (
@@ -829,8 +839,39 @@ export default function EmailGeneratorView({ onAddressesChange }) {
               </div>
             )}
           </div>
+          <div className="email-address-mobile-list md:hidden">
+            {loading ? <p className="p-5 text-sm text-slate-400">Loading addresses...</p> : !filteredAddresses.length ? <p className="p-5 text-sm text-slate-400">No matching addresses. Generate your first address above.</p> : pagedAddresses.map((address) => (
+              <article key={address.id} className={`email-address-mobile-card ${selectedAddressIds.includes(address.id) ? "is-selected" : ""}`}>
+                <div className="flex min-w-0 items-start gap-3">
+                  <SelectionCheckbox checked={selectedAddressIds.includes(address.id)} onChange={() => toggleAddressSelection(address.id)} label={`Select ${address.fullAddress}`} />
+                  <button type="button" onClick={() => selectAddress(address.id)} className="flex min-w-0 flex-1 items-start gap-3 text-left">
+                    <span className="grid size-9 shrink-0 place-items-center rounded-full border border-cyan-300/15 text-cyan-300"><Mail className="size-4" /></span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-all text-sm font-medium leading-5 text-slate-200">{address.fullAddress}</span>
+                      <span className="mt-1.5 block text-[0.68rem] text-slate-500">{address.messageCount} messages · {address.unreadCount} unread · {formatDate(address.createdAt)}</span>
+                    </span>
+                  </button>
+                </div>
+                <div className="email-address-mobile-actions mt-3 flex justify-end gap-2">
+                  <button type="button" onClick={() => openAddressDetails(address)} className="action-button" aria-label={`View details for ${address.fullAddress}`}><Eye /></button>
+                  <button type="button" onClick={() => copyAddress(address)} className="action-button" aria-label={`Copy ${address.fullAddress}`}>{copiedId === address.id ? <Check /> : <Copy />}</button>
+                  <button type="button" onClick={() => setAddressesToDelete([address])} className="action-button text-rose-300" aria-label={`Delete ${address.fullAddress}`}><Trash2 /></button>
+                </div>
+              </article>
+            ))}
+            {filteredAddresses.length > rowsPerPage && (
+              <div className="flex items-center justify-between gap-3 px-4 py-3 text-xs text-slate-400">
+                <span>{addressPage} / {addressPageCount}</span>
+                <div className="flex gap-2">
+                  <button type="button" onClick={() => setAddressPage((page) => Math.max(1, page - 1))} disabled={addressPage === 1} className="rounded-lg border border-white/10 px-3 py-2 disabled:opacity-40">Previous</button>
+                  <button type="button" onClick={() => setAddressPage((page) => Math.min(addressPageCount, page + 1))} disabled={addressPage === addressPageCount} className="rounded-lg border border-white/10 px-3 py-2 disabled:opacity-40">Next</button>
+                </div>
+              </div>
+            )}
+          </div>
+          </>
         ) : selectedMessage ? (
-          <article className="max-h-[520px] overflow-y-auto p-6">
+          <article className="email-history-reader max-h-[520px] overflow-y-auto p-6">
             <button type="button" onClick={() => setSelectedMessage(null)} className="mb-5 text-sm text-cyan-300 transition hover:text-cyan-200">← Back to history</button>
             <h3 className="text-lg font-semibold">{selectedMessage.subject || "(No subject)"}</h3>
             <dl className="mt-4 space-y-1 text-xs text-slate-400"><div><dt className="inline text-slate-500">From: </dt><dd className="inline break-all">{selectedMessage.sender}</dd></div><div><dt className="inline text-slate-500">To: </dt><dd className="inline break-all">{selectedMessage.recipient}</dd></div><div><dt className="inline text-slate-500">Received: </dt><dd className="inline">{formatDate(selectedMessage.receivedAt)}</dd></div><div><dt className="inline text-slate-500">Storage: </dt><dd className="inline">{formatBytes(selectedMessage.rawSizeBytes || 0)}</dd></div></dl>
@@ -842,10 +883,10 @@ export default function EmailGeneratorView({ onAddressesChange }) {
         ) : !messages.length ? (
           <div className="grid min-h-[280px] place-items-center p-8 text-center"><div><span className="mx-auto grid size-12 place-items-center rounded-full border border-cyan-300/15 bg-cyan-300/[0.05] text-cyan-300"><Inbox className="size-5" /></span><p className="mt-4 text-sm font-medium text-slate-300">No messages received yet</p><p className="mt-1 text-xs text-slate-500">New messages sent to your generated addresses will appear here.</p></div></div>
         ) : (
-          <div>
-            <div className="grid min-h-11 grid-cols-[minmax(250px,1.3fr)_minmax(240px,1.5fr)_minmax(170px,0.8fr)] items-center gap-4 border-b border-cyan-100/10 px-5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-slate-500"><span>Recipient</span><span>Message</span><span>Date & time</span></div>
+          <div className="email-history-list">
+            <div className="email-history-header grid min-h-11 grid-cols-[minmax(250px,1.3fr)_minmax(240px,1.5fr)_minmax(170px,0.8fr)] items-center gap-4 border-b border-cyan-100/10 px-5 text-[0.66rem] font-semibold uppercase tracking-[0.1em] text-slate-500"><span>Recipient</span><span>Message</span><span>Date & time</span></div>
             {pagedMessages.map((message) => (
-              <button key={message.id} type="button" onClick={() => openMessage(message.id)} className="grid min-h-[4.8rem] w-full grid-cols-[minmax(250px,1.3fr)_minmax(240px,1.5fr)_minmax(170px,0.8fr)] items-center gap-4 border-b border-cyan-100/[0.07] px-5 text-left transition last:border-b-0 hover:bg-cyan-300/[0.025]">
+              <button key={message.id} type="button" onClick={() => openMessage(message.id)} className="email-history-row grid min-h-[4.8rem] w-full grid-cols-[minmax(250px,1.3fr)_minmax(240px,1.5fr)_minmax(170px,0.8fr)] items-center gap-4 border-b border-cyan-100/[0.07] px-5 text-left transition last:border-b-0 hover:bg-cyan-300/[0.025]">
                 <span className="flex min-w-0 items-center gap-3"><i className={`size-2 shrink-0 rounded-full ${message.readAt ? "bg-slate-700" : "bg-cyan-300 shadow-[0_0_0_3px_rgba(34,211,238,0.08)]"}`} /><span className="truncate text-sm text-slate-300">{message.recipient}</span></span>
                 <span className="min-w-0"><span className={`block truncate text-sm ${message.readAt ? "font-medium text-slate-300" : "font-semibold text-white"}`}>{message.subject || "(No subject)"}</span><span className="mt-1 block truncate text-xs text-slate-500">From {message.sender}</span></span>
                 <span className="flex items-center justify-between gap-3 text-xs text-slate-400">{formatDate(message.receivedAt)}<ChevronRight className="size-4 shrink-0 text-slate-600" /></span>

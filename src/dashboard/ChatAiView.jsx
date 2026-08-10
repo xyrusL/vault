@@ -37,6 +37,7 @@ import {
 } from "./chatAiState";
 import {
   executeVaultAiTool,
+  getSecureValue,
   VAULT_AGENT_INSTRUCTIONS,
   VAULT_AI_TOOLS,
 } from "./chatAiTools";
@@ -349,10 +350,30 @@ async function requestProviderImage(config, apiKey, model, prompt, options = {})
   return imageUrl;
 }
 
-async function requestProviderCompletion(config, apiKey, history, message, imageModel, pendingAction, conversationId) {
+function pageAwarenessInstructions(pageContext) {
+  if (!pageContext?.pageTitle) return "";
+  const pageTools = {
+    dashboard: "get_dashboard_stats and list_activity",
+    vault: "list_vault_items",
+    accounts: "list_accounts",
+    authenticator: "list_authenticator_accounts",
+    "email-generator": "list_email_addresses and list_email_messages",
+    notes: "list_notes",
+    plugins: "list_plugins",
+    activity: "list_activity",
+    "chat-ai": "list_conversations and list_ai_profiles",
+    backup: "get_dashboard_stats",
+    settings: "get_profile",
+  };
+  const recommendedTools = pageTools[pageContext.pageId] || "the relevant Vault tools";
+  return `CURRENT PAGE CONTEXT (this always overrides page references in older conversation messages): The user is now viewing the ${pageContext.pageTitle} section of Vault. Safe live context: ${JSON.stringify(pageContext)}. Use this context to understand "here", "this page", "currently", and "what can you see". For questions asking what is on the current page or requesting current data, you MUST use ${recommendedTools} before answering when those tools are available, then combine the tool result with the live interaction snapshot. Do not answer current-page questions from old chat history. Never imply that you can see secret values, typed form contents, or anything not included in this context or returned by an approved tool.`;
+}
+
+async function requestProviderCompletion(config, apiKey, history, message, imageModel, pendingAction, conversationId, pageContext, pendingDecision = "", completedSecureAction = false) {
   const anthropic = config.apiMode === "anthropic-messages";
   const responses = config.apiMode === "openai-responses";
   const conversationMessages = [...history, { role: "user", content: message }];
+  const pageInstructions = pageAwarenessInstructions(pageContext);
   if (anthropic || responses) {
     const response = await fetch(providerUrl(
       config.baseUrl,
@@ -361,8 +382,8 @@ async function requestProviderCompletion(config, apiKey, history, message, image
       method: "POST",
       headers: providerHeaders(config.apiMode, apiKey, true),
       body: JSON.stringify(anthropic
-        ? { model: config.model, max_tokens: 4096, messages: conversationMessages }
-        : { model: config.model, input: conversationMessages, stream: false }),
+        ? { model: config.model, max_tokens: 4096, system: `${VAULT_AGENT_INSTRUCTIONS}\n${pageInstructions}`, messages: conversationMessages }
+        : { model: config.model, instructions: `${VAULT_AGENT_INSTRUCTIONS}\n${pageInstructions}`, input: conversationMessages, stream: false }),
     });
     const result = await readProviderResult(response, "The AI provider rejected the request.");
     const content = anthropic
@@ -379,9 +400,15 @@ async function requestProviderCompletion(config, apiKey, history, message, image
   }
 
   const providerMessages = [
-    { role: "system", content: VAULT_AGENT_INSTRUCTIONS },
+    { role: "system", content: `${VAULT_AGENT_INSTRUCTIONS}\n${pageInstructions}` },
     ...conversationMessages,
   ];
+  if (completedSecureAction) {
+    providerMessages.push({
+      role: "system",
+      content: "SECURE ACTION STATE: There is no action awaiting approval because the latest secure action was already approved and completed. Its browser-only secure container is visible. Tell the user no additional confirmation is needed and the container is ready; do not describe this as a missing or unavailable action.",
+    });
+  }
   const availableTools = [
     ...VAULT_AI_TOOLS,
     ...(imageModel ? [IMAGE_GENERATION_TOOL] : []),
@@ -392,7 +419,39 @@ async function requestProviderCompletion(config, apiKey, history, message, image
   let generatedImage = null;
   let requestedConfirmation = pendingAction;
   let forceTextResponse = false;
+  let decisionFallback = "";
   let totalToolCalls = 0;
+  if (pendingDecision && pendingAction) {
+    const activity = {
+      id: `trusted-decision-${crypto.randomUUID()}`,
+      name: pendingDecision === "confirm" ? pendingAction.name : "cancel_pending_action",
+      status: "running",
+    };
+    toolActivity.push(activity);
+    let decisionResult;
+    try {
+      decisionResult = pendingDecision === "confirm"
+        ? await executeVaultAiTool(pendingAction.name, pendingAction.args, {
+          approvedActionKey: pendingAction.actionKey,
+          conversationId,
+        })
+        : { ok: true, canceled: true, message: "The pending action was canceled." };
+      activity.status = "completed";
+    } catch (decisionError) {
+      decisionResult = { ok: false, error: decisionError.message };
+      activity.status = "failed";
+    }
+    activity.result = decisionResult;
+    decisionFallback = decisionResult.message || (decisionResult.ok
+      ? "The secure action completed successfully."
+      : `The secure action could not be completed: ${decisionResult.error || "Unknown error"}`);
+    providerMessages.push({
+      role: "system",
+      content: `TRUSTED CONFIRMATION RESULT: The browser already handled the exact pending action. Report this sanitized result as final and do not claim another confirmation is needed: ${JSON.stringify(decisionResult)}`,
+    });
+    requestedConfirmation = null;
+    forceTextResponse = true;
+  }
   for (let round = 0; round < 8; round += 1) {
     let response = await fetch(providerUrl(config.baseUrl, "chat/completions"), {
       method: "POST",
@@ -400,8 +459,7 @@ async function requestProviderCompletion(config, apiKey, history, message, image
       body: JSON.stringify({
         model: config.model,
         messages: providerMessages,
-        tools: availableTools,
-        tool_choice: forceTextResponse ? "none" : "auto",
+        ...(forceTextResponse ? {} : { tools: availableTools, tool_choice: "auto" }),
         stream: false,
       }),
     });
@@ -409,18 +467,26 @@ async function requestProviderCompletion(config, apiKey, history, message, image
       response = await fetch(providerUrl(config.baseUrl, "chat/completions"), {
         method: "POST",
         headers: providerHeaders(config.apiMode, apiKey, true),
-        body: JSON.stringify({ model: config.model, messages: conversationMessages, stream: false }),
+        body: JSON.stringify({ model: config.model, messages: providerMessages, stream: false }),
       });
     }
     const result = await readProviderResult(response, "The AI provider rejected the request.");
     const choice = result?.choices?.[0];
     const providerMessage = choice?.message || {};
     const toolCalls = Array.isArray(providerMessage.tool_calls) ? providerMessage.tool_calls : [];
+    if (forceTextResponse && toolCalls.length) {
+      return {
+        content: decisionFallback,
+        toolActivity,
+        imageUrl: "",
+        pendingAction: null,
+      };
+    }
     if (!toolCalls.length) {
       const content = extractMessageText(providerMessage, choice);
-      if (!content) throw new Error("The AI provider returned an invalid response.");
+      if (!content && !decisionFallback) throw new Error("The AI provider returned an invalid response.");
       return {
-        content: redactDisclosedSecrets(content, disclosedSecrets),
+        content: redactDisclosedSecrets(content || decisionFallback, disclosedSecrets),
         toolActivity,
         imageUrl: generatedImage?.imageUrl || "",
         pendingAction: requestedConfirmation,
@@ -479,9 +545,6 @@ async function requestProviderCompletion(config, apiKey, history, message, image
           };
         } else {
           toolResult = await executeVaultAiTool(activity.name, args, {
-            // A repeated exact call on a later turn means the model interpreted
-            // the user's natural-language reply as approval.
-            approvedActionKey: pendingAction?.actionKey || "",
             conversationId,
           });
           if (toolResult.confirmationRequired) {
@@ -513,6 +576,14 @@ async function requestProviderCompletion(config, apiKey, history, message, image
         tool_call_id: call.id,
         content: JSON.stringify(toolResult),
       });
+    }
+    if (toolActivity.some((activity) => activity.status === "confirmation")) {
+      return {
+        content: "This secure action is ready for approval in Vault's confirmation controls.",
+        toolActivity,
+        imageUrl: "",
+        pendingAction: requestedConfirmation,
+      };
     }
     if (generatedImage && toolActivity.some((activity) => (
       activity.name === "generate_image" && activity.status === "completed"
@@ -784,8 +855,9 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
         title="Configure AI endpoint"
         onClose={closeModal}
         size="endpoint-manager"
+        className="ai-endpoint-modal"
         header={(
-          <div className="flex items-start gap-3 border-b border-white/8 px-4 py-3">
+          <div className="ai-endpoint-header flex items-start gap-3 border-b border-white/8 px-4 py-3">
             <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-cyan-300/10 text-cyan-300"><Settings2 className="size-[18px]" /></span>
             <div className="min-w-0 flex-1">
               <h2 className="text-lg font-semibold text-white">AI endpoint profiles</h2>
@@ -795,9 +867,9 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
           </div>
         )}
       >
-        <form onSubmit={saveEndpoint} className="flex max-h-[calc(100dvh-7rem)] min-h-0 flex-col">
-          <div className="grid min-h-0 flex-1 md:grid-cols-[225px_minmax(0,1fr)]">
-            <aside className="flex min-h-0 flex-col border-b border-white/8 bg-black/10 p-2.5 md:border-b-0 md:border-r">
+        <form onSubmit={saveEndpoint} className="ai-endpoint-form flex max-h-[calc(100dvh-7rem)] min-h-0 flex-col">
+          <div className="ai-endpoint-layout grid min-h-0 flex-1 md:grid-cols-[225px_minmax(0,1fr)]">
+            <aside className="ai-endpoint-sidebar flex min-h-0 flex-col border-b border-white/8 bg-black/10 p-2.5 md:border-b-0 md:border-r">
               <label className="flex h-10 items-center gap-2 rounded-lg border border-white/10 bg-[#071219] px-3 text-slate-500 focus-within:border-cyan-300/35">
                 <Search className="size-4 shrink-0" />
                 <input type="search" value={profileQuery} onChange={(event) => setProfileQuery(event.target.value)} placeholder="Search profiles..." className="min-w-0 flex-1 bg-transparent text-xs text-slate-200 outline-none placeholder:text-slate-600" />
@@ -820,7 +892,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
               <p className="mt-3 px-1 text-[10px] text-slate-600">{profiles.length} profile{profiles.length === 1 ? "" : "s"}</p>
             </aside>
 
-            <div className="min-h-0 overflow-y-auto p-3.5 sm:p-4">
+            <div className="ai-endpoint-editor min-h-0 overflow-y-auto p-3.5 sm:p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <div className="flex items-center gap-2">
@@ -867,7 +939,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
             </div>
           </div>
 
-          <footer className="flex flex-col-reverse gap-2 border-t border-white/8 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <footer className="ai-endpoint-footer flex flex-col-reverse gap-2 border-t border-white/8 px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-h-10">
               {selectedId !== "new" && (
                 <button type="button" disabled={saving || verifying} onClick={() => setRemoveOpen(true)} className="h-10 rounded-lg px-3 text-sm text-red-300 hover:bg-red-400/[0.06]">
@@ -905,24 +977,117 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
   );
 }
 
+function ToolActivityRow({ call }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-black/20 px-3 py-2 text-xs text-slate-400">
+      {call.status === "completed" ? (
+        <Check className="size-3.5 text-emerald-300" />
+      ) : call.status === "confirmation" ? (
+        <MessageSquareText className="size-3.5 text-amber-300" />
+      ) : call.status === "failed" || call.status === "denied" ? (
+        <X className="size-3.5 text-amber-300" />
+      ) : (
+        <LoaderCircle className="size-3.5 auth-spinner text-cyan-300" />
+      )}
+      <span className="font-mono text-[11px] text-slate-300">{call.name}</span>
+      <span className="ml-auto capitalize">{call.status === "confirmation" ? "needs confirmation" : call.status}</span>
+    </div>
+  );
+}
+
 function ToolActivity({ calls }) {
+  const secureCalls = calls.filter((call) => call.result?.data?.secureValueId);
+  const confirmationCalls = calls.filter((call) => (
+    call.status === "confirmation" && !call.result?.data?.secureValueId
+  ));
+  const backgroundCalls = calls.filter((call) => (
+    !call.result?.data?.secureValueId && call.status !== "confirmation"
+  ));
+
   return (
     <div className="mt-3 space-y-2 border-t border-white/8 pt-3">
-      {calls.map((call) => (
-        <div key={call.id} className="flex items-center gap-2 rounded-lg bg-black/20 px-3 py-2 text-xs text-slate-400">
-          {call.status === "completed" ? (
-            <Check className="size-3.5 text-emerald-300" />
-          ) : call.status === "confirmation" ? (
-            <MessageSquareText className="size-3.5 text-amber-300" />
-          ) : call.status === "failed" || call.status === "denied" ? (
-            <X className="size-3.5 text-amber-300" />
-          ) : (
-            <LoaderCircle className="size-3.5 auth-spinner text-cyan-300" />
-          )}
-          <span className="font-mono text-[11px] text-slate-300">{call.name}</span>
-          <span className="ml-auto capitalize">{call.status === "confirmation" ? "needs confirmation" : call.status}</span>
-        </div>
+      {secureCalls.map((call) => (
+        <SecureValueCard
+          key={call.id}
+          id={call.result.data.secureValueId}
+          metadata={call.result.data}
+        />
       ))}
+      {confirmationCalls.map((call) => <ToolActivityRow key={call.id} call={call} />)}
+      {backgroundCalls.length > 0 && (
+        <details className="group rounded-lg bg-black/10 text-xs text-slate-500">
+          <summary className="cursor-pointer list-none px-3 py-2 transition hover:text-slate-300">
+            {backgroundCalls.length} tool {backgroundCalls.length === 1 ? "call" : "calls"}
+            <span className="ml-1 group-open:hidden">· show</span>
+            <span className="ml-1 hidden group-open:inline">· hide</span>
+          </summary>
+          <div className="space-y-2 px-2 pb-2">
+            {backgroundCalls.map((call) => <ToolActivityRow key={call.id} call={call} />)}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function SecureValueCard({ id, metadata }) {
+  const [entry, setEntry] = useState(() => getSecureValue(id));
+  const [visible, setVisible] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const remaining = Number(metadata.expiresAt) - Date.now();
+    if (remaining <= 0) {
+      setEntry(null);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setEntry(null), remaining);
+    return () => window.clearTimeout(timer);
+  }, [metadata.expiresAt]);
+
+  async function copyValue() {
+    if (!entry?.value) return;
+    await navigator.clipboard.writeText(entry.value);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }
+
+  return (
+    <div className="mt-2 rounded-xl border border-emerald-300/20 bg-emerald-300/[0.055] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate text-xs font-semibold text-emerald-200">{metadata.label}</p>
+          <p className="mt-0.5 text-[10px] text-emerald-300/55">Browser-only secure container · expires in 10 minutes</p>
+        </div>
+        <span className="rounded-md border border-emerald-300/15 px-2 py-1 text-[9px] uppercase tracking-wider text-emerald-300/70">{metadata.kind}</span>
+      </div>
+      {entry ? (
+        <div className="mt-3 flex items-stretch gap-2">
+          <div className="min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-3 py-2 font-mono text-xs text-white">
+            <span className="block break-all whitespace-pre-wrap">{visible ? entry.value : "••••••••••••••••"}</span>
+          </div>
+          <button type="button" onClick={() => setVisible((current) => !current)} className="grid size-9 place-items-center rounded-lg border border-white/10 text-slate-300 hover:bg-white/5" aria-label={visible ? "Hide secure value" : "Reveal secure value"}>{visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button>
+          <button type="button" onClick={copyValue} className="grid size-9 place-items-center rounded-lg border border-white/10 text-slate-300 hover:bg-white/5" aria-label="Copy secure value">{copied ? <Check className="size-4 text-emerald-300" /> : <Copy className="size-4" />}</button>
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-slate-500">This secure value expired or was cleared when the page reloaded. Ask the AI to retrieve it again.</p>
+      )}
+    </div>
+  );
+}
+
+function naturalPendingDecision(prompt) {
+  const reply = prompt.trim().toLowerCase().replace(/[.!]+$/, "");
+  if (/^(no|nope|cancel|stop|keep (?:it )?locked|not now|do not|don't)(\b|$)/.test(reply)) return "cancel";
+  if (/^(yes|yep|yeah|confirm|confirmed|approve|approved|proceed|go ahead|do it|deliver(?: it)? securely|show it|reveal it|sure)(\b|$)/.test(reply)) return "confirm";
+  return "";
+}
+
+function PendingActionCard({ disabled, onDecision }) {
+  return (
+    <div className="mt-2 flex gap-2">
+      <button type="button" disabled={disabled} onClick={() => onDecision("confirm")} className="h-8 rounded-md bg-cyan-300 px-4 text-[11px] font-semibold text-[#031316] transition hover:bg-cyan-200 disabled:opacity-40">Yes</button>
+      <button type="button" disabled={disabled} onClick={() => onDecision("cancel")} className="h-8 rounded-md border border-white/10 px-4 text-[11px] font-medium text-slate-400 transition hover:bg-white/5 hover:text-white disabled:opacity-40">No</button>
     </div>
   );
 }
@@ -1063,7 +1228,7 @@ function GeneratedImage({ message }) {
   );
 }
 
-export default function ChatAiView() {
+export default function ChatAiView({ compact = false, pageContext = null }) {
   const [config, setConfig] = useState(null);
   const [clientApiKey, setClientApiKey] = useState("");
   const [availableModels, setAvailableModels] = useState([]);
@@ -1240,13 +1405,23 @@ export default function ChatAiView() {
     newConversation();
   }
 
-  async function sendMessage() {
-    const prompt = draft.trim() || (attachments.length ? "Review the attached files." : "");
+  async function sendMessage(promptOverride = "", pendingDecision = "") {
+    const trustedPrompt = typeof promptOverride === "string" ? promptOverride.trim() : "";
+    const prompt = trustedPrompt || draft.trim() || (attachments.length ? "Review the attached files." : "");
     if (!prompt || sending || !config || !clientApiKey) return;
-    const sentAttachments = attachments;
+    const sentAttachments = trustedPrompt ? [] : attachments;
     const attachmentNames = sentAttachments.map((file) => file.name).join(", ");
     const message = sentAttachments.length ? `${prompt}\n\nAttached: ${attachmentNames}` : prompt;
     const providerMessage = providerMessageWithAttachments(prompt, sentAttachments);
+    const resolvedPendingDecision = pendingDecision || (
+      pendingToolAction && !sentAttachments.length ? naturalPendingDecision(prompt) : ""
+    );
+    const latestAssistantMessage = [...messages].reverse().find((item) => item.role === "assistant");
+    const completedSecureAction = !pendingToolAction
+      && naturalPendingDecision(prompt) === "confirm"
+      && latestAssistantMessage?.toolActivity?.some((call) => (
+        call.status === "completed" && call.result?.data?.secureValueId
+      ));
 
     const history = messages
       .filter((item) => item.role === "user" || item.role === "assistant")
@@ -1263,8 +1438,10 @@ export default function ChatAiView() {
 
     setSending(true);
     setError("");
-    setDraft("");
-    setAttachments([]);
+    if (!trustedPrompt) {
+      setDraft("");
+      setAttachments([]);
+    }
     setMessages((current) => [...current, optimisticUser]);
     requestAnimationFrame(() => composerRef.current?.focus());
     try {
@@ -1279,6 +1456,9 @@ export default function ChatAiView() {
         imageModel,
         pendingToolAction,
         activeConversationId,
+        pageContext,
+        resolvedPendingDecision,
+        completedSecureAction,
       );
       assistantContent = completion.content;
       toolActivity = completion.toolActivity;
@@ -1351,6 +1531,13 @@ export default function ChatAiView() {
       event.preventDefault();
       sendMessage();
     }
+  }
+
+  function handlePendingDecision(decision) {
+    const prompt = decision === "confirm"
+      ? "I confirm the pending secure action."
+      : "Cancel the pending action.";
+    sendMessage(prompt, decision);
   }
 
   async function addAttachments(fileList) {
@@ -1470,13 +1657,13 @@ export default function ChatAiView() {
   }
 
   return (
-    <section className="chat-ai-page" aria-label="AI Chat">
-      <div className="chat-ai-workspace overflow-hidden rounded-xl border border-cyan-200/15 bg-[#061019]/80">
+    <section className={compact ? "chat-ai-page chat-ai-page-compact" : "chat-ai-page"} aria-label="AI Chat">
+      <div className={`chat-ai-workspace overflow-hidden border border-cyan-200/15 bg-[#061019]/80 ${compact ? "border-x-0 border-b-0" : "rounded-xl"}`}>
         {loading ? (
           <div role="status" className="grid h-full place-items-center text-sm text-slate-400"><span className="flex items-center gap-2"><LoaderCircle className="size-5 auth-spinner text-cyan-300" />Loading Chat Ai...</span></div>
         ) : (
           <div className="flex h-full min-h-0 flex-col">
-            <div ref={messagesRef} className="chat-ai-messages min-h-0 flex-1 overflow-y-auto px-4 py-7 sm:px-16 sm:py-8">
+            <div ref={messagesRef} className={`chat-ai-messages min-h-0 flex-1 overflow-y-auto ${compact ? "px-3 py-4" : "px-4 py-7 sm:px-16 sm:py-8"}`}>
               {messagesLoading ? (
                 <div role="status" className="grid h-full place-items-center text-sm text-slate-400"><span className="flex items-center gap-2"><LoaderCircle className="size-4 auth-spinner" />Loading messages...</span></div>
               ) : !messages.length && !sending ? (
@@ -1484,7 +1671,7 @@ export default function ChatAiView() {
                   <span className="chat-ai-signal-ring grid size-14 place-items-center rounded-full border border-cyan-300/45 text-cyan-300"><MessageSquareText className="size-6" /></span>
                   <h2 id="chat-ai-title" className="mt-4 text-lg font-semibold sm:text-xl">How can I help you today?</h2>
                   <p className="mt-1.5 text-xs text-slate-400">{config ? "Start a conversation by typing a message below." : "Configure your endpoint to start a conversation."}</p>
-                  <div className="mt-6 grid w-full max-w-[1200px] gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className={`mt-6 grid w-full max-w-[1200px] gap-2.5 ${compact ? "grid-cols-1" : "sm:grid-cols-2 xl:grid-cols-4"}`}>
                     {starterPrompts.map(({ text, icon: Icon }) => (
                       <button key={text} type="button" onClick={() => chooseStarterPrompt(text)} disabled={!config} className="flex min-h-11 items-center gap-2.5 rounded-lg border border-white/10 bg-[#07131b]/70 px-3 text-left text-xs text-slate-300 transition hover:border-cyan-300/25 hover:bg-cyan-300/[0.035] hover:text-white disabled:opacity-45">
                         <Icon className="size-4 shrink-0 text-slate-400" />{text}
@@ -1493,16 +1680,22 @@ export default function ChatAiView() {
                   </div>
                 </div>
               ) : (
-                <div className="mx-auto w-full max-w-[1160px] space-y-8">
+                <div className={`mx-auto w-full max-w-[1160px] ${compact ? "space-y-5" : "space-y-8"}`}>
                   {messages.map((message) => (
-                    <article key={message.id} className={`flex gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                      {message.role !== "user" && <span className="mt-1 grid size-10 shrink-0 place-items-center rounded-full border border-cyan-300/15 bg-cyan-300/10 text-cyan-300"><Bot className="size-[18px]" /></span>}
-                      <div className={`rounded-2xl px-5 py-4 ${message.imageUrl ? "max-w-[760px]" : message.role === "user" ? "max-w-[46%]" : message.content.includes("```") ? "max-w-[88%]" : "max-w-[64%]"} ${message.role === "user" ? "rounded-br-md bg-gradient-to-br from-cyan-300/[0.13] to-sky-500/[0.08] text-cyan-50" : "rounded-bl-md border border-cyan-100/10 bg-[#07121a]/90 text-slate-200"}`}>
+                    <article key={message.id} className={`chat-ai-message flex gap-4 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {message.role !== "user" && <span className="chat-ai-avatar mt-1 grid size-10 shrink-0 place-items-center rounded-full border border-cyan-300/15 bg-cyan-300/10 text-cyan-300"><Bot className="size-[18px]" /></span>}
+                      <div className={`chat-ai-bubble-content rounded-2xl ${compact ? "max-w-[86%] px-4 py-3" : `px-5 py-4 ${message.imageUrl ? "max-w-[760px]" : message.role === "user" ? "max-w-[46%]" : message.content.includes("```") ? "max-w-[88%]" : "max-w-[64%]"}`} ${message.role === "user" ? "rounded-br-md bg-gradient-to-br from-cyan-300/[0.13] to-sky-500/[0.08] text-cyan-50" : "rounded-bl-md border border-cyan-100/10 bg-[#07121a]/90 text-slate-200"}`}>
                         <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-cyan-300/70"><span>{message.role === "user" ? "You" : message.providerName || "AI"}</span>{message.role !== "user" && message.model && <span className="max-w-48 truncate text-[9px] font-normal normal-case tracking-normal text-slate-500" title={message.model}>{message.model}</span>}</p>
                         <div className={`chat-ai-markdown ${message.role === "user" ? "chat-ai-markdown-user" : ""}`}>
                           <Markdown components={chatMarkdownComponents} remarkPlugins={chatMarkdownPlugins}>{message.content}</Markdown>
                         </div>
                         {message.toolActivity?.length > 0 && <ToolActivity calls={message.toolActivity} />}
+                        {pendingToolAction && message.toolActivity?.some((call) => call.status === "confirmation") && (
+                          <PendingActionCard
+                            disabled={sending || !config}
+                            onDecision={handlePendingDecision}
+                          />
+                        )}
                         {message.imageUrl && <GeneratedImage message={message} />}
                         <p className={`mt-2 flex items-center gap-2 text-[11px] text-slate-500 ${message.role === "user" ? "justify-end" : "justify-start"}`}>
                           {formatMessageTime(message.createdAt)}
@@ -1521,13 +1714,13 @@ export default function ChatAiView() {
               )}
             </div>
 
-            <div className="px-3 pb-3 sm:px-4 sm:pb-3">
+            <div className={`chat-ai-composer-shell ${compact ? "px-2 pb-2" : "px-3 pb-3 sm:px-4 sm:pb-3"}`}>
               {error && <div role="alert" className="mx-auto mb-2 flex max-w-[1200px] items-center justify-between gap-3 rounded-lg border border-red-400/20 bg-red-400/[0.06] px-3 py-2 text-sm text-red-200"><span>{error}</span>{(loading || !config) && <button type="button" onClick={loadPage} className="shrink-0 font-medium underline">Retry</button>}</div>}
-              <div onDragEnter={(event) => { event.preventDefault(); setComposerDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setComposerDragging(false); }} onDrop={handleComposerDrop} className={`chat-ai-composer relative mx-auto max-w-[1200px] rounded-xl border bg-[#08141d]/95 p-4 transition ${composerDragging ? "border-cyan-300 bg-cyan-300/[0.04] shadow-[0_0_0_3px_rgba(34,211,238,0.08)]" : "border-cyan-100/15"}`}>
+              <div onDragEnter={(event) => { event.preventDefault(); setComposerDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setComposerDragging(false); }} onDrop={handleComposerDrop} className={`chat-ai-composer relative mx-auto max-w-[1200px] rounded-xl border bg-[#08141d]/95 transition ${compact ? "p-3" : "p-4"} ${composerDragging ? "border-cyan-300 bg-cyan-300/[0.04] shadow-[0_0_0_3px_rgba(34,211,238,0.08)]" : "border-cyan-100/15"}`}>
                 <label className="sr-only" htmlFor="chat-ai-message">Type your message</label>
                 {composerDragging && <div className="pointer-events-none absolute inset-2 z-20 grid place-items-center rounded-lg border border-dashed border-cyan-300/50 bg-[#07141d]/95 text-sm font-medium text-cyan-200">Drop text or code files here</div>}
                 {historyOpen && (
-                  <div ref={historyMenuRef} className="absolute bottom-[calc(100%+0.6rem)] left-0 z-10 w-full max-w-md overflow-hidden rounded-xl border border-white/10 bg-[#08141d] p-2 shadow-2xl shadow-black/40">
+                  <div ref={historyMenuRef} className="chat-ai-history-menu absolute bottom-[calc(100%+0.6rem)] left-0 z-10 w-full max-w-md overflow-hidden rounded-xl border border-white/10 bg-[#08141d] p-2 shadow-2xl shadow-black/40">
                     <div className="flex items-center gap-2 px-3 py-2 text-xs font-medium uppercase tracking-wider text-slate-500"><History className="size-4" />Conversations</div>
                     <div className="max-h-64 overflow-y-auto">
                       {!conversations.length && <p className="px-3 py-4 text-sm text-slate-500">No saved conversations yet.</p>}
@@ -1544,22 +1737,22 @@ export default function ChatAiView() {
                   </div>
                 )}
                 {attachments.length > 0 && <div className="mb-2 flex flex-wrap gap-2">{attachments.map((file) => <span key={file.id} className="flex h-8 max-w-56 items-center gap-2 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.05] px-2.5 text-xs text-slate-300"><FileText className="size-3.5 shrink-0 text-cyan-300" /><span className="truncate">{file.name}</span><button type="button" onClick={() => setAttachments((current) => current.filter((item) => item.id !== file.id))} className="text-slate-600 hover:text-white" aria-label={`Remove ${file.name}`}><X className="size-3.5" /></button></span>)}</div>}
-                <div className="flex min-h-12 items-start gap-2">
+                <div className="chat-ai-input-row flex min-h-12 items-start gap-2">
                   <textarea id="chat-ai-message" ref={composerRef} value={draft} onChange={handleDraftChange} onKeyDown={handleComposerKeyDown} disabled={!config || sending} rows={1} placeholder={config ? "Type your message..." : "Configure an endpoint to start chatting"} className="max-h-32 min-h-12 min-w-0 flex-1 resize-none bg-transparent text-sm text-white outline-none placeholder:text-slate-500 disabled:cursor-not-allowed" />
                 </div>
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-slate-500">
+                <div className="chat-ai-toolbar mt-2 flex items-center justify-between gap-3">
+                  <div className="chat-ai-tools flex items-center gap-2 text-slate-500">
                     <input ref={attachmentInputRef} type="file" multiple accept=".txt,.md,.json,.js,.jsx,.ts,.tsx,.html,.htm,.css,.py,.java,.php,.rb,.rs,.sql,.svg,.xml,.yaml,.yml,.toml,.vue,.csv,text/*" onChange={(event) => { addAttachments(event.target.files || []); event.target.value = ""; }} className="sr-only" />
                     <button type="button" onClick={() => attachmentInputRef.current?.click()} disabled={!config || sending || attachments.length >= 5} className="grid size-10 place-items-center rounded-lg border border-white/10 transition hover:border-cyan-300/25 hover:text-cyan-200 disabled:opacity-40" aria-label="Upload text or code files"><Paperclip className="size-4" /></button>
                     <button type="button" onClick={toggleNewConversation} className={`grid size-10 place-items-center rounded-lg border transition hover:border-cyan-300/25 hover:text-cyan-200 ${newConversationActive ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-200 shadow-sm shadow-cyan-950/30" : "border-white/10"}`} aria-label="New conversation" aria-pressed={newConversationActive}><Plus className="size-4" /></button>
                     <button ref={historyButtonRef} type="button" onClick={() => setHistoryOpen((open) => !open)} className={`grid size-10 place-items-center rounded-lg border transition hover:border-cyan-300/25 hover:text-cyan-200 ${historyOpen ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-200 shadow-sm shadow-cyan-950/30" : "border-white/10"}`} aria-label="Conversation history" aria-expanded={historyOpen} aria-pressed={historyOpen}>{historyOpen ? <History className="size-4" /> : <Globe2 className="size-4" />}</button>
                     <button type="button" onClick={() => setConfigOpen((open) => !open)} className={`grid size-10 place-items-center rounded-lg border transition hover:border-cyan-300/25 hover:text-cyan-200 ${configOpen ? "border-cyan-300/35 bg-cyan-300/10 text-cyan-200 shadow-sm shadow-cyan-950/30" : "border-white/10"}`} aria-label="Configure endpoint" aria-pressed={configOpen}><Settings2 className="size-4" /></button>
                   </div>
-                  <div className="flex min-w-0 items-center gap-3">
-                    <div className="w-80 max-w-[45vw]">
+                  <div className="chat-ai-send-controls flex min-w-0 items-center gap-3">
+                    <div className={compact ? "hidden" : "chat-ai-model-select w-80 max-w-[45vw]"}>
                       <SelectField name="chatModel" value={selectedModelValue} options={modelOptions} onChange={selectChatModel} disabled={!config?.id || modelSaving || sending} ariaLabel="Select provider and AI model" textClassName={modelTextClassName} className="h-10 w-full text-slate-300" />
                     </div>
-                    <button type="button" onClick={sendMessage} disabled={!config || (!draft.trim() && !attachments.length) || sending} aria-label="Send message" className="grid size-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-cyan-300 to-cyan-500 text-[#001316] shadow-md shadow-cyan-950/25 transition hover:from-cyan-200 hover:to-cyan-400 disabled:opacity-35">{sending ? <LoaderCircle className="size-4 auth-spinner" /> : <Send className="size-[18px]" />}</button>
+                    <button type="button" onClick={() => sendMessage()} disabled={!config || (!draft.trim() && !attachments.length) || sending} aria-label="Send message" className="grid size-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-cyan-300 to-cyan-500 text-[#001316] shadow-md shadow-cyan-950/25 transition hover:from-cyan-200 hover:to-cyan-400 disabled:opacity-35">{sending ? <LoaderCircle className="size-4 auth-spinner" /> : <Send className="size-[18px]" />}</button>
                   </div>
                 </div>
               </div>

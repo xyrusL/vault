@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { localizeDevelopmentCookie } from './src/apiSession.js'
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
@@ -12,8 +13,13 @@ export default defineConfig(({ mode }) => {
   }
 
   if (!useLocalApi) {
-    proxy.cookieDomainRewrite = ''
     proxy.headers = { origin: 'https://vault.deze.me' }
+    proxy.configure = (server) => {
+      server.on('proxyRes', (response) => {
+        const cookies = response.headers['set-cookie']
+        if (cookies) response.headers['set-cookie'] = cookies.map(localizeDevelopmentCookie)
+      })
+    }
   }
 
   return {

@@ -21,7 +21,8 @@ test("AI secret access requires confirmation and keeps values local", () => {
   assert.match(tools, /tool\("list_vault_items"/);
   assert.match(tools, /tool\("copy_vault_secret"/);
   assert.match(tools, /name === "copy_vault_secret"/);
-  assert.match(tools, /navigator\.clipboard\.writeText/);
+  assert.match(tools, /stageSecureValue\(clipboardValue/);
+  assert.match(tools, /secureValueId/);
   assert.doesNotMatch(tools, /request_vault_secret/);
   assert.match(chat, /redactDisclosedSecrets/);
   assert.match(chat, /value: "\[secret redacted\]"/);

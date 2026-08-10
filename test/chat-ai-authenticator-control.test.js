@@ -17,6 +17,8 @@ test("AI authenticator changes require confirmation and support account linking"
   assert.match(tools, /name === "import_authenticator_from_clipboard"/);
   assert.match(tools, /name === "import_authenticator_from_vault"/);
   assert.match(tools, /name === "delete_authenticator_account"/);
+  assert.match(tools, /name === "copy_authenticator_code"/);
+  assert.match(tools, /stageSecureValue\(code/);
   assert.match(tools, /use the exact account email or username as accountName/);
   assert.match(tools, /live code links automatically on the Accounts page/);
 });

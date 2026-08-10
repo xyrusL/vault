@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Sparkles,
   SlidersHorizontal,
+  Tag,
   Trash2,
 } from "lucide-react";
 import apiFetch from "../api";
@@ -180,29 +181,30 @@ function SecretEditor({ initialValue = emptyDraft, title, submitLabel, busy, err
   const usesKeySet = draft.type === "config" || multipleValues;
   const allEnvironmentValuesVisible = environmentEntries.length > 0
     && environmentEntries.every((_, index) => visibleEntries[index]);
+  const SelectedTypeIcon = typeDetails(draft.type).icon;
 
   return (
-    <Modal title={title} onClose={onClose} size="account">
-      <form onSubmit={submit} autoComplete="off" className="mt-5 space-y-5">
+    <Modal title={title} onClose={onClose} size="account" className="vault-editor-modal">
+      <form onSubmit={submit} autoComplete="off" className="vault-editor-form mt-5 space-y-5">
         {(error || validationError) && <p className="rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{validationError || error}</p>}
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block min-w-0">
             <span className="mb-2 block text-xs text-slate-400">Name</span>
-            <input name="name" value={draft.name} onChange={update} maxLength={200} required autoFocus autoComplete="off" data-1p-ignore data-lpignore="true" placeholder={draft.type === "config" ? "Production environment" : "Production API key"} className="form-control" />
+            <span className="vault-editor-input relative block"><Tag className="vault-editor-field-icon pointer-events-none absolute left-4 top-1/2 hidden size-5 -translate-y-1/2 text-cyan-300" /><input name="name" value={draft.name} onChange={update} maxLength={200} required autoFocus autoComplete="off" data-1p-ignore data-lpignore="true" placeholder={draft.type === "config" ? "Production environment" : "Production API key"} className="form-control" /></span>
           </label>
-          <SelectField label="Secret type" name="type" value={draft.type} onChange={update} options={secretTypes} />
+          <SelectField label="Secret type" name="type" value={draft.type} onChange={update} options={secretTypes} leadingIcon={<SelectedTypeIcon className="vault-editor-type-icon hidden size-5 shrink-0 text-cyan-300" />} />
         </div>
         {usesKeySet ? (
-          <div>
-            <div className="mb-2 flex items-center justify-between gap-3"><div><p className="text-xs text-slate-400">{draft.type === "config" ? "Environment variables" : "Keys and values"}</p><p className="mt-1 text-[0.68rem] text-slate-600">Keep related credentials for this app in one encrypted item.</p></div><div className="flex items-center gap-1">{draft.type !== "config" && <button type="button" onClick={() => { setMultipleValues(false); setDraft((current) => ({ ...current, value: environmentEntries[0]?.value || "" })); }} className="h-9 rounded-lg px-3 text-xs text-slate-500 hover:bg-white/5 hover:text-white">Use single value</button>}<button type="button" onClick={() => setVisibleEntries(environmentEntries.map(() => !allEnvironmentValuesVisible))} className="flex h-9 items-center gap-2 rounded-lg px-3 text-xs text-slate-400 hover:bg-white/5 hover:text-white">{allEnvironmentValuesVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}{allEnvironmentValuesVisible ? "Hide values" : "Show values"}</button></div></div>
-            <div className="overflow-hidden rounded-xl border border-white/10 bg-black/10">
+          <div className="vault-keyset-panel">
+            <div className="vault-keyset-header mb-2 flex items-center justify-between gap-3"><div><p className="text-xs text-slate-400">{draft.type === "config" ? "Environment variables" : "Keys and values"}</p><p className="mt-1 text-[0.68rem] text-slate-600">Keep related credentials for this app in one encrypted item.</p></div><div className="flex items-center gap-1">{draft.type !== "config" && <button type="button" onClick={() => { setMultipleValues(false); setDraft((current) => ({ ...current, value: environmentEntries[0]?.value || "" })); }} className="h-9 rounded-lg px-3 text-xs text-slate-500 hover:bg-white/5 hover:text-white">Use single value</button>}<button type="button" onClick={() => setVisibleEntries(environmentEntries.map(() => !allEnvironmentValuesVisible))} className="flex h-9 items-center gap-2 rounded-lg px-3 text-xs text-slate-400 hover:bg-white/5 hover:text-white">{allEnvironmentValuesVisible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}{allEnvironmentValuesVisible ? "Hide values" : "Show values"}</button></div></div>
+            <div className="vault-keyset-fields overflow-hidden rounded-xl border border-white/10 bg-black/10">
               <div className="hidden grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_40px] gap-2 border-b border-white/[0.07] px-3 py-2 text-[0.65rem] font-medium uppercase tracking-[0.1em] text-slate-600 sm:grid"><span>Key</span><span>Value</span><span /></div>
               <div className="divide-y divide-white/[0.06]">
                 {environmentEntries.map((entry, index) => (
-                  <div key={index} className="grid gap-2 p-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_40px] sm:items-center">
+                  <div key={index} className="vault-keyset-entry grid gap-2 p-3 sm:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_40px] sm:items-center">
                     <label><span className="mb-1 block text-[0.65rem] uppercase tracking-wider text-slate-600 sm:hidden">Key</span><input value={entry.key} onChange={(event) => updateEnvironmentEntry(index, "key", event.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))} maxLength={200} autoComplete="off" data-1p-ignore data-lpignore="true" spellCheck="false" placeholder="API_KEY" className="form-control font-mono text-xs" aria-label={`Environment variable ${index + 1} key`} /></label>
                     <div><span className="mb-1 block text-[0.65rem] uppercase tracking-wider text-slate-600 sm:hidden">Value</span><span className="relative block"><input type={visibleEntries[index] ? "text" : "password"} value={entry.value} onChange={(event) => updateEnvironmentEntry(index, "value", event.target.value)} maxLength={12000} autoComplete="new-password" data-1p-ignore data-lpignore="true" spellCheck="false" placeholder="Enter value" className="form-control pr-12 font-mono text-xs" aria-label={`Environment variable ${index + 1} value`} /><button type="button" onClick={() => toggleEnvironmentEntryVisibility(index)} className="absolute inset-y-0 right-1 grid w-10 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white" aria-label={visibleEntries[index] ? `Hide environment variable ${index + 1} value` : `Show environment variable ${index + 1} value`}>{visibleEntries[index] ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button></span></div>
-                    <button type="button" onClick={() => removeEnvironmentEntry(index)} className="grid size-9 place-items-center justify-self-end rounded-lg text-slate-600 hover:bg-red-500/10 hover:text-red-300" aria-label={`Remove environment variable ${index + 1}`}><Minus className="size-4" /></button>
+                    <button type="button" onClick={() => removeEnvironmentEntry(index)} className="vault-keyset-remove grid size-9 place-items-center justify-self-end rounded-lg text-slate-600 hover:bg-red-500/10 hover:text-red-300" aria-label={`Remove environment variable ${index + 1}`}><Minus className="size-4" /></button>
                   </div>
                 ))}
               </div>
@@ -372,7 +374,7 @@ export default function VaultView() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="vault-summary-grid grid grid-cols-2 gap-3 lg:grid-cols-4">
             {[
               { label: "Total secrets", value: secrets.length, text: "Encrypted records", icon: KeyRound, tone: "cyan" },
               { label: "Secret types", value: usedTypeCount, text: "Active categories", icon: SlidersHorizontal, tone: "amber" },

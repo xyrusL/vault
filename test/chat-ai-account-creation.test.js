@@ -10,8 +10,8 @@ test("AI account creation generates and stores a local-only password", () => {
   assert.match(tools, /function generateSecurePassword/);
   assert.match(tools, /crypto\.getRandomValues/);
   assert.match(tools, /\.\.\.\(generatePassword \? \{ password \} : \{\}\)/);
-  assert.match(tools, /navigator\.clipboard\.writeText\(password\)/);
-  assert.match(tools, /passwordGenerated: generatePassword, passwordCopied/);
+  assert.match(tools, /stageSecureValue\(password/);
+  assert.match(tools, /passwordGenerated: generatePassword, secureContainerDelivered: generatePassword/);
   assert.doesNotMatch(tools, /credentials: \{[^}]*password[,}]/);
 });
 

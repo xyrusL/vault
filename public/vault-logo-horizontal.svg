@@ -1,0 +1,18 @@
+<svg width="170" height="64" viewBox="0 0 170 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="shield" x1="30" y1="6" x2="30" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34E5D6"/>
+      <stop offset="1" stop-color="#087C7B"/>
+    </linearGradient>
+    <linearGradient id="lock" x1="30" y1="24" x2="30" y2="46" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#31E3D3"/>
+      <stop offset="1" stop-color="#12A99F"/>
+    </linearGradient>
+  </defs>
+  <path d="M30 5 52 14v16c0 12-8 22-22 28C16 52 8 42 8 30V14L30 5Z" fill="#07191C" fill-opacity=".72" stroke="url(#shield)" stroke-width="2.2" stroke-linejoin="round"/>
+  <path d="M23 31v-4a7 7 0 0 1 14 0v4" stroke="#28DCCE" stroke-width="2.6" stroke-linecap="round"/>
+  <rect x="20" y="30" width="20" height="17" rx="2.5" fill="url(#lock)"/>
+  <circle cx="30" cy="37.5" r="2" fill="#031011"/>
+  <path d="M30 39.5v3" stroke="#031011" stroke-width="1.8" stroke-linecap="round"/>
+  <text x="65" y="40" fill="white" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="700" letter-spacing="-.8">Vault</text>
+</svg>

@@ -4,13 +4,17 @@ import { readFile } from "node:fs/promises";
 
 const dashboard = await readFile(new URL("../src/Dashboard.jsx", import.meta.url), "utf8");
 const chrome = await readFile(new URL("../src/dashboard/DashboardChrome.jsx", import.meta.url), "utf8");
+const floatingChat = await readFile(new URL("../src/dashboard/FloatingAiChat.jsx", import.meta.url), "utf8");
 
-test("dashboard keeps the Chat Ai view mounted after its first visit", () => {
-  assert.match(dashboard, /import ChatAiView from "\.\/dashboard\/ChatAiView"/);
+test("dashboard keeps one persistent Chat Ai view across floating and full-page modes", () => {
+  assert.match(dashboard, /import FloatingAiChat from "\.\/dashboard\/FloatingAiChat"/);
   assert.match(dashboard, /case "chat-ai":/);
-  assert.match(dashboard, /chatInitialized \|\| activePage === "chat-ai"/);
-  assert.match(dashboard, /activePage === "chat-ai" \? "" : "hidden"/);
-  assert.match(dashboard, /<ChatAiView \/>/);
+  assert.match(dashboard, /<FloatingAiChat/);
+  assert.match(dashboard, /fullPage=\{activePage === "chat-ai"\}/);
+  assert.match(dashboard, /pageContext=\{pageContext\}/);
+  assert.match(floatingChat, /import ChatAiView from "\.\/ChatAiView"/);
+  assert.match(floatingChat, /<ChatAiView compact=\{!fullPage\} pageContext=\{pageContext\} \/>/);
+  assert.match(floatingChat, /initialized &&/);
 });
 
 test("sidebar exposes the Chat Ai navigation item", () => {
@@ -96,7 +100,7 @@ test("Chat Ai runs Vault tools in the browser through existing manual APIs", () 
   assert.match(chatView, /confirm_pending_action/);
   assert.match(chatView, /cancel_pending_action/);
   assert.match(chatView, /approvedActionKey: confirmedAction\.actionKey/);
-  assert.match(chatView, /approvedActionKey: pendingAction\?\.actionKey/);
+  assert.doesNotMatch(chatView, /approvedActionKey: pendingAction\?\.actionKey/);
   assert.doesNotMatch(chatTools, /tool\("(?:password|two_factor|backup)/);
 });
 

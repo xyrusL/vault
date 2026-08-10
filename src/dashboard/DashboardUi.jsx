@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 
-export function Modal({ title, description, children, onClose, size = "default", header }) {
+export function Modal({ title, description, children, onClose, size = "default", header, className = "" }) {
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") onClose();
@@ -23,7 +23,7 @@ export function Modal({ title, description, children, onClose, size = "default",
       onMouseDown={onClose}
     >
       <section
-        className={`logout-modal w-full rounded-2xl border border-white/10 bg-[#081117] p-4 shadow-2xl sm:p-6 ${size === "wide" ? "max-w-[900px]" : size === "note" ? "max-h-[calc(100dvh-2rem)] max-w-[760px] overflow-hidden [padding:0]" : size === "authenticator" ? "max-h-[calc(100dvh-2rem)] max-w-[700px] overflow-y-auto sm:p-5" : size === "account" ? "max-h-[90dvh] max-w-[680px] overflow-y-auto sm:p-5" : size === "endpoint-manager" ? "max-h-[min(620px,calc(100dvh-2rem))] max-w-[860px] overflow-hidden bg-gradient-to-br from-[#091721] to-[#061018] [padding:0]" : size === "endpoint" ? "max-h-[calc(100dvh-2rem)] max-w-[620px] overflow-y-auto bg-gradient-to-br from-[#091721] to-[#061018] sm:p-4" : "max-w-[560px]"}`}
+        className={`logout-modal w-full rounded-2xl border border-white/10 bg-[#081117] p-4 shadow-2xl sm:p-6 ${size === "wide" ? "max-w-[900px]" : size === "note" ? "max-h-[calc(100dvh-2rem)] max-w-[760px] overflow-hidden [padding:0]" : size === "authenticator-camera" ? "max-w-[960px] bg-[radial-gradient(circle_at_82%_10%,rgba(8,145,178,0.08),transparent_32%),linear-gradient(145deg,#091721,#061018)] sm:!p-4" : size === "authenticator" ? "max-w-[760px] bg-[radial-gradient(circle_at_82%_10%,rgba(8,145,178,0.08),transparent_32%),linear-gradient(145deg,#091721,#061018)] sm:!p-4" : size === "account" ? "max-h-[90dvh] max-w-[680px] overflow-y-auto sm:p-5" : size === "endpoint-manager" ? "max-h-[min(620px,calc(100dvh-2rem))] max-w-[860px] overflow-hidden bg-gradient-to-br from-[#091721] to-[#061018] [padding:0]" : size === "endpoint" ? "max-h-[calc(100dvh-2rem)] max-w-[620px] overflow-y-auto bg-gradient-to-br from-[#091721] to-[#061018] sm:p-4" : "max-w-[560px]"} ${className}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}
