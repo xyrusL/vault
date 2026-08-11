@@ -2851,15 +2851,28 @@ async function deleteEmailRoutingRule(env, zoneId, ruleId) {
       headers: { authorization: `Bearer ${env.CLOUDFLARE_EMAIL_ROUTING_TOKEN}` },
     },
   )
-  if (response.ok || response.status === 404) return
-
   const result = await response.json().catch(() => null)
+  if (response.status === 404 || (response.ok && result?.success !== false)) return
+
   console.error(
     'Email Routing rule deletion failed',
     response.status,
     result?.errors?.[0]?.message || 'Unknown error',
   )
   throw new ClientError('Email routing is temporarily unavailable', 503)
+}
+
+function emailRoutingRuleMatchesAddress(rule, fullAddress) {
+  const normalizedAddress = String(fullAddress || '').trim().toLowerCase()
+  if (!normalizedAddress) return false
+
+  const matchesRecipient = rule?.matchers?.some((matcher) =>
+    matcher.type === 'literal'
+    && matcher.field === 'to'
+    && String(matcher.value || '').trim().toLowerCase() === normalizedAddress)
+  if (!matchesRecipient) return false
+
+  return String(rule.name || '').trim().toLowerCase() === `vault generated: ${normalizedAddress}`
 }
 
 async function listEmailRoutingRules(env, zoneId) {
@@ -2887,6 +2900,28 @@ async function listEmailRoutingRules(env, zoneId) {
   } while (page <= totalPages)
 
   return rules
+}
+
+async function deleteEmailRoutingRulesForAddress(env, address) {
+  const fullAddress = String(address?.full_address || '').trim().toLowerCase()
+  const hostname = fullAddress.split('@')[1] || ''
+  const zoneId = address?.routing_zone_id || parseEmailRoutingZones(env).get(hostname)
+  if (!zoneId) throw new ClientError('Email routing is not configured for this domain', 503)
+
+  await deleteEmailRoutingRule(env, zoneId, address?.routing_rule_id)
+
+  for (const delay of emailRoutingSyncDelaysMilliseconds) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay))
+    const matchingRules = (await listEmailRoutingRules(env, zoneId))
+      .filter((rule) => emailRoutingRuleMatchesAddress(rule, fullAddress))
+    if (!matchingRules.length) return
+
+    for (const rule of matchingRules) {
+      await deleteEmailRoutingRule(env, zoneId, rule.id)
+    }
+  }
+
+  throw new ClientError('Email routing deletion could not be confirmed. Try deleting the address again.', 503)
 }
 
 async function reconcileEmailRoutingRules(env, userId = null) {
@@ -2953,8 +2988,10 @@ async function digestClientIdentifier(value) {
 export const emailRouting = {
   parseZones: parseEmailRoutingZones,
   ruleIsReady: emailRoutingRuleIsReady,
+  ruleMatchesAddress: emailRoutingRuleMatchesAddress,
   createRule: createEmailRoutingRule,
   deleteRule: deleteEmailRoutingRule,
+  deleteAddressRules: deleteEmailRoutingRulesForAddress,
   listRules: listEmailRoutingRules,
   reconcile: reconcileEmailRoutingRules,
 }
@@ -3327,7 +3364,7 @@ async function deleteEmailAddress(request, env, user, addressId) {
   `).bind(addressId, user.id).first()
   if (!address) return json({ error: 'Address not found' }, 404, request, env)
 
-  await deleteEmailRoutingRule(env, address.routing_zone_id, address.routing_rule_id)
+  await deleteEmailRoutingRulesForAddress(env, address)
 
   const remove = env.DB.prepare(
     'DELETE FROM generated_email_addresses WHERE id = ? AND user_id = ?',
@@ -3352,14 +3389,14 @@ async function deleteEmailAddresses(request, env, user) {
 
   const placeholders = ids.map(() => '?').join(', ')
   const { results } = await env.DB.prepare(`
-    SELECT id, routing_rule_id, routing_zone_id FROM generated_email_addresses
+    SELECT id, full_address, routing_rule_id, routing_zone_id FROM generated_email_addresses
     WHERE user_id = ? AND id IN (${placeholders})
   `).bind(user.id, ...ids).all()
   const ownedIds = results.map((address) => address.id)
   if (ownedIds.length !== ids.length) throw new ClientError('One or more email addresses were not found', 404)
 
   for (const address of results) {
-    await deleteEmailRoutingRule(env, address.routing_zone_id, address.routing_rule_id)
+    await deleteEmailRoutingRulesForAddress(env, address)
   }
 
   const ownedPlaceholders = ownedIds.map(() => '?').join(', ')

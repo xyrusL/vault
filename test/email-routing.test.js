@@ -104,6 +104,53 @@ test('deletes a stored routing rule and treats missing rules as already removed'
   assert.equal(requests[0].options.method, 'DELETE')
 })
 
+test('does not accept an unsuccessful Cloudflare deletion response', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({
+    success: false,
+    errors: [{ message: 'Rule could not be deleted' }],
+  }))
+
+  await assert.rejects(
+    emailRouting.deleteRule(env, 'zone-octagram', 'rule-123'),
+    /Email routing is temporarily unavailable/,
+  )
+})
+
+test('finds and deletes a generated rule when the stored rule id is missing', async (t) => {
+  const requests = []
+  let ruleExists = true
+  t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    requests.push({ url, options })
+    if (options.method === 'DELETE') {
+      ruleExists = false
+      return Response.json({ success: true, result: null })
+    }
+    return Response.json({
+      success: true,
+      result: ruleExists
+        ? [{
+            id: 'orphan-rule',
+            name: 'Vault generated: legacy@octagram.qzz.io',
+            matchers: [{ type: 'literal', field: 'to', value: 'legacy@octagram.qzz.io' }],
+          }]
+        : [],
+      result_info: { total_pages: 1 },
+    })
+  })
+
+  await emailRouting.deleteAddressRules(env, {
+    full_address: 'legacy@octagram.qzz.io',
+    routing_rule_id: null,
+    routing_zone_id: null,
+  })
+
+  const deleteRequest = requests.find((request) => request.options.method === 'DELETE')
+  assert.equal(
+    deleteRequest.url,
+    'https://api.cloudflare.com/client/v4/zones/zone-octagram/email/routing/rules/orphan-rule',
+  )
+})
+
 test('reconciliation deletes Vault addresses whose Cloudflare rules are missing', async (t) => {
   const addresses = [
     {
