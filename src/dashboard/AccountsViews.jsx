@@ -388,6 +388,8 @@ export function AccountsView({
       {selectedAccount && (
         <AccountDetailsModal
           account={selectedAccount}
+          authenticatorEntry={authenticatorByAccount.get(selectedAccount.id)}
+          authenticatorNow={authenticatorNow}
           onClose={() => setSelectedAccount(null)}
           onUpdated={onAccountUpdated}
         />
@@ -642,7 +644,7 @@ function DuplicateAccountNotice({ details }) {
   );
 }
 
-function AccountDetailsModal({ account, onClose, onUpdated }) {
+function AccountDetailsModal({ account, authenticatorEntry, authenticatorNow, onClose, onUpdated }) {
   const [details, setDetails] = useState(null);
   const [form, setForm] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -736,7 +738,7 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
       title={editing ? "Edit secured account" : "Account details"}
       onClose={onClose}
       size="wide"
-      className="account-details-modal account-modal-sheet"
+      className={`account-details-modal account-modal-sheet ${editing ? "account-editor-modal" : ""}`}
       header={(
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
@@ -778,6 +780,8 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
       {!loading && details && !editing && (
         <AccountDetails
           details={details}
+          authenticatorEntry={authenticatorEntry}
+          authenticatorNow={authenticatorNow}
           showPassword={showPassword}
           onPasswordVisibility={() => setShowPassword((visible) => !visible)}
           onEdit={startEditing}
@@ -898,6 +902,8 @@ function AccountDetailsModal({ account, onClose, onUpdated }) {
 
 function AccountDetails({
   details,
+  authenticatorEntry,
+  authenticatorNow,
   showPassword,
   onPasswordVisibility,
   onEdit,
@@ -905,118 +911,127 @@ function AccountDetails({
   const status = getEffectiveStatus(details);
 
   return (
-    <div className="account-details-content mt-3">
-      <div className="flex justify-end">
+    <div className="account-details-content mt-5">
+      <div className="account-details-toolbar">
+        <div className="account-details-status">
+          <span className={`account-details-status-dot ${getStatusDotTone(status)}`} />
+          <span className={getStatusTone(status)}>{status}</span>
+          <span className="text-slate-600">Secured record</span>
+        </div>
         <button
           type="button"
           onClick={onEdit}
-          className="flex h-9 items-center gap-2 rounded-lg border border-cyan-300/35 px-3 text-xs font-medium text-cyan-300 transition hover:bg-cyan-300/[0.06]"
+          className="account-details-edit flex h-10 items-center gap-2 rounded-lg border border-cyan-300/30 px-3.5 text-sm font-medium text-cyan-300 transition hover:bg-cyan-300/[0.06]"
         >
           <Pencil className="size-4" />
           Edit account
         </button>
       </div>
-      <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
-        {details.email && (
-          <PrimaryDetail label="Email" className="sm:col-span-2 lg:col-span-2">
-            <span className="break-all">{details.email}</span>
-            <CopyButton value={details.email} label="Copy email" />
-          </PrimaryDetail>
-        )}
-        {details.username && (
-          <PrimaryDetail label="Username">
-            <span className="break-all">{details.username}</span>
-            <CopyButton value={details.username} label="Copy username" />
-          </PrimaryDetail>
-        )}
-        {details.login_url && (
-          <PrimaryDetail label="Login URL" className="sm:col-span-2 lg:col-span-2">
-            <a
-              href={details.login_url}
-              target="_blank"
-              rel="noreferrer"
-              className="min-w-0 break-all text-cyan-300 hover:underline"
-            >
-              {details.login_url}
-            </a>
-            <CopyButton value={details.login_url} label="Copy login URL" />
-          </PrimaryDetail>
-        )}
-        {details.password && (
-          <PrimaryDetail label="Password">
-            <span className="min-w-0 flex-1 break-all font-mono">
-              {showPassword ? details.password : "••••••••••••"}
-            </span>
-            <button
-              type="button"
-              onClick={onPasswordVisibility}
-              className="grid size-9 shrink-0 place-items-center rounded-lg border border-white/10 text-slate-400 hover:text-white"
-              aria-label={showPassword ? "Hide password" : "Show password"}
-            >
-              {showPassword ? (
-                <EyeOff className="size-4" />
-              ) : (
-                <Eye className="size-4" />
-              )}
-            </button>
-            <CopyButton value={details.password} label="Copy password" />
-          </PrimaryDetail>
-        )}
-        <DetailItem label="Account label" icon={Bot}>{details.label}</DetailItem>
-        <DetailItem label="Platform" icon={Layers3}>{details.platform || "Custom"}</DetailItem>
-        <DetailItem label="Category" icon={Folder}>{details.category}</DetailItem>
-        <DetailItem label="Plan" icon={Bookmark}>{details.plan}</DetailItem>
-        <DetailItem label="Status" icon={ShieldCheck}>
-          <span className={`flex items-center gap-2 ${getStatusTone(status)}`}>
-            {status}
-            <i className={`size-2 rounded-full ${getStatusDotTone(status)}`} />
-          </span>
-        </DetailItem>
-        <DetailItem label="Expiration" icon={CalendarClock}>
-          {formatExpiry(details, true)}
-        </DetailItem>
-        <DetailItem label="Added" icon={Clock3}>
-          {formatTimestamp(details.created_at)}
-        </DetailItem>
-        {details.notes && (
-          <DetailItem
-            label="Notes"
-            icon={FileText}
-            className="sm:col-span-2 lg:col-span-3"
-          >
-            <span className="whitespace-pre-wrap break-words">
-              {details.notes}
-            </span>
-          </DetailItem>
-        )}
+      <div className="account-details-layout">
+        <section className="account-credentials-section" aria-labelledby="account-signin-heading">
+          <div className="account-details-section-heading">
+            <h3 id="account-signin-heading">Sign-in information</h3>
+            <p>Credentials and access details for this account.</p>
+          </div>
+          <div className="account-credential-list">
+            {details.email && (
+              <PrimaryDetail label="Email address">
+                <span className="break-all">{details.email}</span>
+                <CopyButton value={details.email} label="Copy email" />
+              </PrimaryDetail>
+            )}
+            {details.username && (
+              <PrimaryDetail label="Username">
+                <span className="break-all">{details.username}</span>
+                <CopyButton value={details.username} label="Copy username" />
+              </PrimaryDetail>
+            )}
+            {details.login_url && (
+              <PrimaryDetail label="Login URL">
+                <a
+                  href={details.login_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="min-w-0 break-all text-cyan-300 hover:underline"
+                >
+                  {details.login_url}
+                </a>
+                <CopyButton value={details.login_url} label="Copy login URL" />
+              </PrimaryDetail>
+            )}
+            {details.password && (
+              <PrimaryDetail label="Password">
+                <span className="min-w-0 flex-1 break-all font-mono tracking-[0.12em]">
+                  {showPassword ? details.password : "••••••••••••"}
+                </span>
+                <button
+                  type="button"
+                  onClick={onPasswordVisibility}
+                  className="account-credential-action grid size-10 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-white/5 hover:text-white"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? (
+                    <EyeOff className="size-4" />
+                  ) : (
+                    <Eye className="size-4" />
+                  )}
+                </button>
+                <CopyButton value={details.password} label="Copy password" />
+              </PrimaryDetail>
+            )}
+            <PrimaryDetail label="2FA code">
+              <VerificationCode
+                entry={authenticatorEntry}
+                now={authenticatorNow}
+                emptyLabel="No value"
+              />
+            </PrimaryDetail>
+          </div>
+          {details.notes && (
+            <div className="account-details-notes">
+              <div className="account-details-section-heading">
+                <h3>Private notes</h3>
+              </div>
+              <p className="whitespace-pre-wrap break-words">{details.notes}</p>
+            </div>
+          )}
+        </section>
+
+        <aside className="account-profile-section" aria-labelledby="account-profile-heading">
+          <div className="account-details-section-heading">
+            <h3 id="account-profile-heading">Account profile</h3>
+            <p>Classification and lifecycle details.</p>
+          </div>
+          <dl className="account-profile-list">
+            <DetailItem label="Account label" icon={Bot}>{details.label}</DetailItem>
+            <DetailItem label="Platform" icon={Layers3}>{details.platform || "Custom"}</DetailItem>
+            <DetailItem label="Category" icon={Folder}>{details.category}</DetailItem>
+            <DetailItem label="Plan" icon={Bookmark}>{details.plan}</DetailItem>
+            <DetailItem label="Expiration" icon={CalendarClock}>{formatExpiry(details, true)}</DetailItem>
+            <DetailItem label="Added" icon={Clock3}>{formatTimestamp(details.created_at)}</DetailItem>
+          </dl>
+        </aside>
       </div>
     </div>
   );
 }
 
-function PrimaryDetail({ label, children, className = "" }) {
+function PrimaryDetail({ label, children }) {
   return (
-    <div className={`account-primary-detail rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] px-3.5 py-2.5 ${className}`}>
-      <p className="text-[11px] uppercase tracking-wider text-slate-500">
-        {label}
-      </p>
-      <div className="mt-1.5 flex min-w-0 items-center justify-between gap-3 text-sm font-medium text-slate-100">
+    <div className="account-primary-detail">
+      <p>{label}</p>
+      <div>
         {children}
       </div>
     </div>
   );
 }
 
-function DetailItem({ label, children, icon: Icon, className = "" }) {
+function DetailItem({ label, children, icon: Icon }) {
   return (
-    <div className={`account-detail-item flex min-h-[62px] items-center gap-3 rounded-xl border border-cyan-100/10 bg-gradient-to-br from-white/[0.035] to-cyan-300/[0.015] p-3 ${className}`}>
-      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-cyan-300/[0.06] text-cyan-300 shadow-[0_0_20px_rgba(34,211,238,0.06)]">
-        <Icon className="size-4" />
-      </span>
-      <div className="min-w-0">
-        <p className="text-[11px] uppercase tracking-wider text-slate-500">{label}</p>
-        <div className="mt-1 break-words text-sm font-medium text-slate-200">{children}</div>
-      </div>
+    <div className="account-detail-item">
+      <dt><Icon aria-hidden="true" />{label}</dt>
+      <dd>{children}</dd>
     </div>
   );
 }
@@ -1529,13 +1544,13 @@ function makeAuthenticatorCode(entry, now) {
   }
 }
 
-function VerificationCode({ entry, now, compact = false }) {
-  if (!entry) return <span className="text-xs text-slate-700" title="No matching authenticator account">—</span>;
+function VerificationCode({ entry, now, compact = false, emptyLabel = "—" }) {
+  if (!entry) return <span className="verification-code-empty text-xs text-slate-600" title="No matching authenticator account">{emptyLabel}</span>;
   const code = makeAuthenticatorCode(entry, now);
-  if (!code) return <span className="text-xs text-slate-700">—</span>;
+  if (!code) return <span className="verification-code-empty text-xs text-slate-600">{emptyLabel}</span>;
 
   return (
-    <span className={`flex items-center gap-1.5 ${compact ? "mt-3" : ""}`} title={`Matched to ${entry.issuer}`}>
+    <span className={`verification-code flex items-center gap-1.5 ${compact ? "mt-3" : ""}`} title={`Matched to ${entry.issuer}`}>
       <span className="font-mono text-xs font-semibold tracking-[0.14em] text-cyan-200">{code.replace(/(.{3})/, "$1 ")}</span>
       <CopyButton value={code} label="Copy verification code" compact />
     </span>

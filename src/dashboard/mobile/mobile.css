@@ -823,57 +823,116 @@
     font-size: 0.65rem;
   }
 
-  .account-details-content { margin-top: 0.65rem; }
-
-  .account-details-content > div:first-child button {
-    height: 2.25rem;
-    font-size: 0.7rem;
+  .account-details-modal {
+    padding: 0.9rem 1rem 1rem;
   }
 
-  .account-details-content > div:nth-child(2) {
-    grid-auto-rows: minmax(min-content, auto);
-    gap: 0.5rem;
-    margin-top: 0.65rem;
+  .account-editor-modal {
+    padding: 0.9rem 1rem max(1rem, env(safe-area-inset-bottom));
   }
 
-  .account-details-content > div:nth-child(2) > div {
-    min-height: 0;
+  .account-details-content {
+    margin-top: 0.85rem;
+  }
+
+  .account-details-toolbar {
+    align-items: flex-start;
+  }
+
+  .account-details-status {
     min-width: 0;
-    overflow: hidden;
-    padding: 0.7rem;
+    flex-wrap: wrap;
+    font-size: 0.65rem;
+  }
+
+  .account-details-edit {
+    min-height: 2.75rem;
+    padding-right: 0.75rem;
+    padding-left: 0.75rem;
+    font-size: 0.72rem;
+  }
+
+  .account-details-layout {
+    display: block;
+    margin-top: 1rem;
+  }
+
+  .account-details-section-heading h3 {
+    font-size: 0.88rem;
+  }
+
+  .account-details-section-heading p {
+    font-size: 0.68rem;
+  }
+
+  .account-credential-list {
+    margin-top: 0.55rem;
+  }
+
+  .account-primary-detail {
+    display: block;
+    min-height: 0;
+    padding: 0.8rem 0;
+  }
+
+  .account-primary-detail > p {
+    width: auto;
+    font-size: 0.6rem;
   }
 
   .account-primary-detail > div {
-    min-width: 0;
-    overflow: hidden;
+    justify-content: flex-start;
+    margin-top: 0.45rem;
+    font-size: 0.78rem;
   }
 
   .account-primary-detail > div > span,
   .account-primary-detail > div > a {
-    display: block;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .account-detail-item > div {
-    min-width: 0;
-    overflow: hidden;
+  .account-credential-action,
+  .account-primary-detail .size-9 {
+    width: 2.75rem;
+    height: 2.75rem;
   }
 
-  .account-detail-item > div > div {
+  .account-profile-section {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    padding-left: 0;
+    border-top: 1px solid rgba(148, 163, 184, 0.13);
+    border-left: 0;
+  }
+
+  .account-profile-list {
+    margin-top: 0.45rem;
+  }
+
+  .account-detail-item {
+    min-height: 3.2rem;
+  }
+
+  .account-detail-item dt {
+    font-size: 0.6rem;
+  }
+
+  .account-detail-item dd {
+    max-width: 55%;
     overflow-wrap: anywhere;
-  }
-
-  .account-details-content > div:nth-child(2) p,
-  .account-details-content > div:nth-child(2) dt {
-    font-size: 0.62rem;
-  }
-
-  .account-details-content > div:nth-child(2) dd,
-  .account-details-content > div:nth-child(2) a {
     font-size: 0.75rem;
+  }
+
+  .account-details-notes {
+    margin-top: 1.25rem;
+    padding-top: 0.85rem;
+  }
+
+  .account-details-notes > p {
+    font-size: 0.78rem;
   }
 
   .account-edit-form {
@@ -889,13 +948,15 @@
   }
 
   .account-edit-form .form-control {
-    min-height: 2.15rem;
-    padding: 0.35rem 0.65rem;
-    font-size: 0.72rem;
+    min-height: 2.75rem;
+    height: 2.75rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.78rem;
   }
 
   .account-edit-form textarea.form-control {
-    min-height: 2.8rem;
+    min-height: 4rem;
+    height: 4rem;
   }
 
   .account-edit-form > div:last-child {
@@ -909,7 +970,7 @@
   }
 
   .account-edit-form > div:last-child button {
-    height: 2.5rem;
+    height: 2.75rem;
     font-size: 0.75rem;
   }
 
