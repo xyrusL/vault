@@ -1259,10 +1259,6 @@ select:autofill {
 }
 
 @media (max-width: 1023px) {
-  .brand-panel {
-    padding-top: 1rem;
-  }
-
   .curve-field {
     width: 75vw;
     opacity: 0.55;
@@ -1349,6 +1345,12 @@ select:autofill {
   .chat-ai-page,
   .activity-page {
     height: calc(100dvh - 190px - env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 767px) {
+  .brand-panel {
+    padding-top: 1rem;
   }
 }
 

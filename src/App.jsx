@@ -200,12 +200,12 @@ function App() {
         ))}
       </div>
 
-      <div className="vault-content relative z-10 mx-auto grid min-h-screen w-full max-w-[960px] items-center gap-5 px-4 py-4 sm:gap-6 sm:px-5 sm:py-5 lg:grid-cols-[260px_460px] lg:justify-between lg:gap-12 lg:px-8">
+      <div className="vault-content relative z-10 mx-auto grid min-h-screen w-full max-w-[1080px] items-center gap-5 px-4 py-4 sm:gap-6 sm:px-5 sm:py-5 md:grid-cols-[minmax(220px,1fr)_minmax(400px,460px)] md:gap-8 md:px-6 lg:gap-12 lg:px-8">
         <section
-          className="brand-panel mx-auto w-full max-w-[260px] lg:mx-0"
+          className="brand-panel mx-auto w-full max-w-[260px] md:justify-self-center"
           aria-labelledby="brand-name"
         >
-          <div className="text-center lg:mb-6">
+          <div className="text-center md:mb-6">
             <h1 id="brand-name" className="sr-only">
               Vault
             </h1>
@@ -223,7 +223,7 @@ function App() {
             </p>
           </div>
 
-          <div className="mx-auto hidden w-fit flex-col gap-4 lg:flex lg:mx-0">
+          <div className="mx-auto hidden w-fit flex-col gap-4 md:flex">
             {benefits.map(({ icon: Icon, title, description }) => (
               <div key={title} className="flex items-start gap-3">
                 <div className="grid size-9 shrink-0 place-items-center rounded-full bg-[#0b171b] text-[#23d5c7] ring-1 ring-white/[0.03]">
