@@ -2406,13 +2406,13 @@
     background: #02090f;
   }
 
-  .dashboard-shell > div {
+  .dashboard-shell > .dashboard-main {
     display: flex;
     min-height: 100dvh;
     flex-direction: column;
   }
 
-  .dashboard-shell > div > .dashboard-header {
+  .dashboard-shell > .dashboard-main > .dashboard-header {
     position: sticky;
     z-index: 20;
     display: grid;

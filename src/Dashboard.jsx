@@ -351,7 +351,7 @@ function Dashboard() {
         onNavigate={navigate}
         onLogout={() => setLogoutOpen(true)}
       />
-      <div className="lg:pl-[256px]">
+      <div className="dashboard-main lg:pl-[256px]">
         <DashboardHeader
           activePage={activePage}
           user={user}
