@@ -196,7 +196,7 @@ export default function PluginsView() {
   }
 
   return (
-    <section className="pb-8">
+    <section className="plugins-view pb-8">
       <div className="flex flex-col gap-3 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.045] p-4 sm:flex-row sm:items-center">
         <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-emerald-300/10 text-emerald-300"><ShieldCheck className="size-5" /></span>
         <div><p className="text-sm font-medium text-slate-100">Secret-safe AI connection</p><p className="mt-1 text-xs leading-5 text-slate-400">AI Chat can identify enabled plugins and their capabilities. Client secrets, bot tokens, and refresh tokens stay encrypted and are never returned to the AI provider.</p></div>

@@ -62,7 +62,7 @@ function App() {
   }, [isDashboard]);
 
   function completeLogin(data) {
-    setDevelopmentToken(data?.token, data?.expiresAt);
+    setDevelopmentToken(data?.token, data?.expiresAt, remember);
     window.location.assign("/dashboard");
   }
 

@@ -340,8 +340,8 @@ export default function NotesView() {
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search notes" className="h-11 w-full rounded-xl border border-white/10 bg-[#081219] pl-10 pr-4 text-sm text-white outline-none placeholder:text-slate-500 focus:border-cyan-300/35" />
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="flex rounded-xl border border-white/10 bg-[#081219] p-1">
+        <div className="notes-view-options flex items-center gap-3">
+          <div className="notes-layout-toggle flex rounded-xl border border-white/10 bg-[#081219] p-1" role="group" aria-label="Note layout">
               <button type="button" onClick={() => setLayout("grid")} aria-label="Grid view" aria-pressed={layout === "grid"} className={`grid size-9 place-items-center rounded-lg ${layout === "grid" ? "bg-cyan-400/10 text-cyan-300" : "text-slate-500 hover:text-slate-200"}`}><LayoutGrid className="size-[18px]" /></button>
               <button type="button" onClick={() => setLayout("list")} aria-label="List view" aria-pressed={layout === "list"} className={`grid size-9 place-items-center rounded-lg ${layout === "list" ? "bg-cyan-400/10 text-cyan-300" : "text-slate-500 hover:text-slate-200"}`}><List className="size-[18px]" /></button>
           </div>
@@ -351,9 +351,9 @@ export default function NotesView() {
               onClick={() => setSortOpen((open) => !open)}
               aria-haspopup="listbox"
               aria-expanded={sortOpen}
-              className={`flex h-11 w-full items-center justify-between gap-5 rounded-xl border bg-[#081219] px-4 text-sm text-slate-300 outline-none transition ${sortOpen ? "border-cyan-300/35" : "border-white/10 hover:border-white/20"}`}
+              className={`notes-sort-trigger flex h-11 w-full min-w-0 items-center justify-between gap-5 rounded-xl border bg-[#081219] px-4 text-sm text-slate-300 outline-none transition ${sortOpen ? "border-cyan-300/35" : "border-white/10 hover:border-white/20"}`}
             >
-              {sortOptions.find((option) => option.value === sort)?.label}
+              <span className="min-w-0 truncate">{sortOptions.find((option) => option.value === sort)?.label}</span>
               <ChevronDown className={`size-4 shrink-0 text-slate-500 transition-transform ${sortOpen ? "rotate-180" : ""}`} />
             </button>
             {sortOpen && (
@@ -388,9 +388,9 @@ export default function NotesView() {
           </div>
         </div>
       ) : filteredNotes.length ? (
-        <div className={`mx-auto mt-5 w-full max-w-[1180px] ${layout === "grid" ? "columns-1 gap-4 sm:columns-2 xl:columns-4" : "space-y-3"}`}>
+        <div className={`notes-collection mx-auto mt-5 w-full max-w-[1180px] ${layout === "grid" ? "notes-layout-grid columns-1 gap-4 sm:columns-2 xl:columns-4" : "notes-layout-list space-y-3"}`}>
           {filteredNotes.map((note) => (
-            <article key={note.id} className={`note-card group relative mb-4 break-inside-avoid overflow-hidden rounded-xl border border-white/[0.1] bg-gradient-to-br from-[#0b171e] to-[#071117] shadow-lg shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-300/25 hover:shadow-black/25 ${layout === "list" ? "mb-0" : ""}`}>
+            <article key={note.id} className={`note-card group relative break-inside-avoid overflow-hidden rounded-xl border border-white/[0.1] bg-gradient-to-br from-[#0b171e] to-[#071117] shadow-lg shadow-black/10 transition hover:-translate-y-0.5 hover:border-cyan-300/25 hover:shadow-black/25 ${layout === "list" ? "note-card-list mb-0" : "note-card-grid mb-4"}`}>
               <button type="button" onClick={() => setEditing({ ...note })} className={`w-full px-4 pb-2 pt-4 text-left ${layout === "list" ? "pr-28" : ""}`}>
                 <span className="absolute right-4 top-4 text-cyan-300 opacity-0 transition group-hover:opacity-100"><Pin className="size-4" /></span>
                 <h2 className="line-clamp-2 pr-5 text-base font-semibold leading-6 text-slate-100">{note.title || "Untitled note"}</h2>

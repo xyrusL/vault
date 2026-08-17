@@ -1,8 +1,23 @@
 # Vault Mobile QA Report
 
-Date: 2026-08-04
+Initial review: 2026-08-04
+Latest update: 2026-08-11
 Target: http://localhost:5173/dashboard
 Project: D:\Tools\vault
+
+## Latest update — Notes mobile grid and list
+
+- Fixed the Notes default grid so it renders as two masonry-style columns below 640px instead of appearing identical to list view.
+- Added explicit `notes-layout-grid` and `notes-layout-list` states so the selected layout control always matches the rendered note collection.
+- Tightened mobile grid-card typography, spacing, actions, and timestamps while preserving full-width cards in list mode.
+- Kept the sort control on one 44px row at 320px with a non-wrapping, truncating label.
+- Verified the Notes page at 390x844 and 320x700 using the local Vite app with mocked authenticated API responses and representative notes.
+- Confirmed grid mode uses two columns, switching to list mode produces full-width cards, and both controls update `aria-pressed` correctly.
+- Confirmed document width equals viewport width at 390px and 320px, with no horizontal overflow, framework overlay, console warning, or console error.
+- `npm run lint`: passed with 0 warnings and 0 errors.
+- `npm run build` was not run for this update.
+
+The Chrome extension connection was unavailable during automation, so the latest authenticated Notes check used standalone Playwright with mocked API data. No production credentials or cookies were accessed.
 
 ## Scope and evidence
 
@@ -102,7 +117,7 @@ Areas requiring targeted mobile verification:
 6. Test Accounts table/card layout; source contains an `xl:block` table branch that must have a mobile alternative.
 7. Test Email Generator split-pane behavior; source uses an `lg:grid` layout and selected-message show/hide behavior.
 8. Test AI Chat keyboard input and composer with the mobile keyboard visible.
-9. Test Notes horizontal tab strip and editor modal.
+9. Test the Notes editor modal with the mobile keyboard visible; grid/list controls are now verified at 320px and 390px.
 10. Test Activity and Backup scrolling inside the page, avoiding nested-scroll traps.
 11. Test Settings forms, selects, modals, dropdown direction, and file upload controls.
 12. Test all dialogs at short viewport heights with keyboard focus and safe-area padding.
@@ -128,8 +143,8 @@ npm run build
 npm run lint
 ```
 
-Both commands passed during this review.
+Both commands passed during the initial review. The 2026-08-11 Notes update ran `npm run lint` only, and it passed.
 
 ## Limitations
 
-No source files were changed. Authenticated production credentials/cookies were not handled or exported. The mobile authenticated dashboard still requires a user-owned authenticated browser session or a non-production test account.
+The 2026-08-11 update changes the Notes component and mobile stylesheet. Authenticated production credentials/cookies were not handled or exported. The wider mobile dashboard still requires a user-owned authenticated browser session or a non-production test account; the latest automated pass covers the Notes page with mocked authenticated data only.

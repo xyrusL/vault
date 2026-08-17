@@ -526,7 +526,9 @@ async function issueSession(request, env, user, remember, clientKey, auditEvent 
       },
     },
   }, 200, request, env, {
-    'set-cookie': sessionCookie(request, token, lifetime),
+    // Unchecked sessions use a browser-session cookie; the server-side expiry
+    // still limits how long an abandoned session remains valid.
+    'set-cookie': sessionCookie(request, token, remember ? lifetime : null),
   })
 }
 

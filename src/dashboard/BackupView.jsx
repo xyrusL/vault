@@ -131,7 +131,7 @@ export default function BackupView({ accounts }) {
   }
 
   return (
-    <section className="space-y-5">
+    <section className="backup-view space-y-5">
       <div className="rounded-2xl border border-cyan-300/12 bg-gradient-to-br from-cyan-300/[0.05] to-transparent p-5 sm:p-6">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex max-w-2xl gap-4">

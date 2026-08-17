@@ -1,20 +1,24 @@
-import { usesDevelopmentToken } from "./apiSession";
+import {
+  getDevelopmentTokenStorage,
+  usesDevelopmentToken,
+} from "./apiSession";
 
 const API_URL = import.meta.env.DEV ? "/api" : "https://api.vault.deze.me/v1";
 const developmentTokenKey = "vault_dev_session";
 const developmentTokensEnabled = usesDevelopmentToken(import.meta.env.MODE);
 
-export function setDevelopmentToken(token, expiresAt) {
+export function setDevelopmentToken(token, expiresAt, remember = false) {
   if (!developmentTokensEnabled) {
     clearDevelopmentToken();
     return;
   }
 
   if (token) {
-    localStorage.setItem(
-      developmentTokenKey,
-      JSON.stringify({ token, expiresAt }),
-    );
+    const persists = getDevelopmentTokenStorage(remember) === "local";
+    const storage = persists ? localStorage : sessionStorage;
+    const otherStorage = persists ? sessionStorage : localStorage;
+    otherStorage.removeItem(developmentTokenKey);
+    storage.setItem(developmentTokenKey, JSON.stringify({ token, expiresAt }));
   }
 }
 

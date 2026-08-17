@@ -244,7 +244,7 @@ export default function SettingsView({
   }
 
   return (
-    <section>
+    <section className="settings-view">
       <div className="grid gap-5 xl:grid-cols-2">
         <form onSubmit={saveProfile} className="panel space-y-4">
           <h2 className="text-lg font-semibold">Account profile</h2>
