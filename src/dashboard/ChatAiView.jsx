@@ -626,9 +626,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
   const [models, setModels] = useState(initialModels);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelListAvailable, setModelListAvailable] = useState(true);
-  const [verifiedSignature, setVerifiedSignature] = useState(
-    () => config?.status === "verified" && apiKey ? signature : "",
-  );
+  const [verifiedSignature, setVerifiedSignature] = useState("");
   const [verifying, setVerifying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [removing, setRemoving] = useState(false);
@@ -636,8 +634,10 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
   const [showApiKey, setShowApiKey] = useState(false);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileQuery, setProfileQuery] = useState("");
+  const [checkingProfileIds, setCheckingProfileIds] = useState([]);
   const [error, setError] = useState("");
   const autoVerificationSignature = useRef("");
+  const checkedProfilesSignature = useRef("");
 
   const verified = Boolean(verifiedSignature && verifiedSignature === signature);
   const modelOptions = [...new Set([fields.model, ...models].filter(Boolean))];
@@ -648,9 +648,9 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
       .includes(profileQuery.trim().toLowerCase()),
   );
 
-  const saveProfileStatus = useCallback(async (status) => {
-    if (selectedId === "new") return;
-    const response = await apiFetch(`/ai/config/${encodeURIComponent(selectedId)}/status`, {
+  const saveProfileStatus = useCallback(async (status, profileId = selectedId) => {
+    if (profileId === "new") return;
+    const response = await apiFetch(`/ai/config/${encodeURIComponent(profileId)}/status`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status }),
@@ -662,6 +662,55 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
     const result = await readApiResult(response, "Unable to update endpoint health.");
     onProfilesChanged(result.profiles || profiles);
   }, [onProfilesChanged, profiles, selectedId]);
+
+  useEffect(() => {
+    const profileIds = profiles.map((profile) => profile.id);
+    const profilesSignature = profileIds.join(",");
+    if (!profileIds.length || checkedProfilesSignature.current === profilesSignature) return undefined;
+    checkedProfilesSignature.current = profilesSignature;
+    let cancelled = false;
+
+    async function checkSavedProfiles() {
+      setCheckingProfileIds(profileIds);
+      const results = await Promise.all(profileIds.map(async (profileId) => {
+        try {
+          const response = await apiFetch(`/ai/client-config/${encodeURIComponent(profileId)}`);
+          if (response.status === 401) throw new Error("Session expired");
+          const result = await readApiResult(response, "Unable to load the saved endpoint.");
+          const profile = result.data;
+          await discoverProviderModelIds(profile.baseUrl, profile.apiMode, profile.apiKey);
+          return { profileId, status: "verified" };
+        } catch {
+          return { profileId, status: "down" };
+        }
+      }));
+      if (cancelled) return;
+
+      onProfilesChanged(profiles.map((profile) => ({
+        ...profile,
+        status: results.find((result) => result.profileId === profile.id)?.status || "down",
+      })));
+      setCheckingProfileIds([]);
+
+      for (const result of results) {
+        await apiFetch(`/ai/config/${encodeURIComponent(result.profileId)}/status`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ status: result.status }),
+        }).catch(() => {});
+      }
+      if (!cancelled) {
+        const response = await apiFetch("/ai/config").catch(() => null);
+        if (response?.ok) {
+          const refreshed = await response.json().catch(() => null);
+          if (refreshed?.profiles) onProfilesChanged(refreshed.profiles);
+        }
+      }
+    }
+
+    checkSavedProfiles();
+    return () => { cancelled = true; };
+  }, [onProfilesChanged, profiles]);
 
   useEffect(() => {
     if (!config?.baseUrl || !apiKey || initialModels.length) return undefined;
@@ -717,12 +766,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
       });
       setModels([]);
       setModelListAvailable(false);
-      setVerifiedSignature(selected.status === "verified" ? JSON.stringify({
-        providerId: selected.providerId,
-        apiMode: selected.apiMode,
-        baseUrl: selected.baseUrl,
-        apiKey: selected.apiKey,
-      }) : "");
+      setVerifiedSignature("");
       setModelsLoading(true);
       try {
         const nextModels = await discoverProviderModelIds(
@@ -732,11 +776,18 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
         );
         setModels(nextModels);
         setModelListAvailable(nextModels.length > 0);
-        await saveProfileStatus(nextModels.length ? "verified" : "down").catch(() => {});
+        setVerifiedSignature(JSON.stringify({
+          providerId: selected.providerId,
+          apiMode: selected.apiMode,
+          baseUrl: selected.baseUrl,
+          apiKey: selected.apiKey,
+        }));
+        await saveProfileStatus("verified", id).catch(() => {});
       } catch {
         setModels([]);
         setModelListAvailable(false);
-        await saveProfileStatus("down").catch(() => {});
+        setVerifiedSignature("");
+        await saveProfileStatus("down", id).catch(() => {});
       } finally {
         setModelsLoading(false);
       }
@@ -903,7 +954,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
                 {filteredProfiles.map((profile) => (
                   <button key={profile.id} type="button" onClick={() => loadEndpoint(profile.id)} disabled={profileLoading || saving || verifying} className={`w-full rounded-lg border px-2.5 py-2 text-left transition disabled:opacity-50 ${selectedId === profile.id ? "border-cyan-300/60 bg-cyan-300/[0.07]" : "border-white/10 bg-[#071219]/70 hover:border-white/20"}`}>
                     <span className="flex items-center gap-2">
-                      <i className={`size-2 shrink-0 rounded-full ${profile.status === "verified" ? "bg-emerald-300" : profile.status === "down" ? "bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.45)]" : "bg-amber-300"}`} />
+                      <i className={`size-2 shrink-0 rounded-full ${checkingProfileIds.includes(profile.id) ? "animate-pulse bg-amber-300" : profile.status === "verified" ? "bg-emerald-300" : "bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.45)]"}`} title={checkingProfileIds.includes(profile.id) ? "Checking endpoint" : profile.status === "verified" ? "Endpoint available" : "Endpoint unavailable"} />
                       <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-200">{profile.providerName}</span>
                       {profile.isActive && <span className="rounded-full bg-cyan-300/10 px-2 py-0.5 text-[9px] font-semibold text-cyan-200">Active</span>}
                     </span>
