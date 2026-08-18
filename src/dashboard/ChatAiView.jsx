@@ -602,7 +602,7 @@ async function requestProviderCompletion(config, apiKey, history, message, image
   throw new Error("The AI reached the Vault tool-call limit.");
 }
 
-function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSaved, onDeleted, onClose }) {
+function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSaved, onDeleted, onProfilesChanged, onClose }) {
   const [selectedId, setSelectedId] = useState(config?.id || "new");
   const [fields, setFields] = useState({
     providerName: config?.providerName || "9router",
@@ -627,7 +627,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelListAvailable, setModelListAvailable] = useState(true);
   const [verifiedSignature, setVerifiedSignature] = useState(
-    () => config && apiKey ? signature : "",
+    () => config?.status === "verified" && apiKey ? signature : "",
   );
   const [verifying, setVerifying] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -647,6 +647,21 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
       .toLowerCase()
       .includes(profileQuery.trim().toLowerCase()),
   );
+
+  const saveProfileStatus = useCallback(async (status) => {
+    if (selectedId === "new") return;
+    const response = await apiFetch(`/ai/config/${encodeURIComponent(selectedId)}/status`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (response.status === 401) {
+      window.location.replace("/");
+      return;
+    }
+    const result = await readApiResult(response, "Unable to update endpoint health.");
+    onProfilesChanged(result.profiles || profiles);
+  }, [onProfilesChanged, profiles, selectedId]);
 
   useEffect(() => {
     if (!config?.baseUrl || !apiKey || initialModels.length) return undefined;
@@ -702,12 +717,12 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
       });
       setModels([]);
       setModelListAvailable(false);
-      setVerifiedSignature(JSON.stringify({
+      setVerifiedSignature(selected.status === "verified" ? JSON.stringify({
         providerId: selected.providerId,
         apiMode: selected.apiMode,
         baseUrl: selected.baseUrl,
         apiKey: selected.apiKey,
-      }));
+      }) : "");
       setModelsLoading(true);
       try {
         const nextModels = await discoverProviderModelIds(
@@ -717,9 +732,11 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
         );
         setModels(nextModels);
         setModelListAvailable(nextModels.length > 0);
+        await saveProfileStatus(nextModels.length ? "verified" : "down").catch(() => {});
       } catch {
         setModels([]);
         setModelListAvailable(false);
+        await saveProfileStatus("down").catch(() => {});
       } finally {
         setModelsLoading(false);
       }
@@ -752,13 +769,19 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
         model: nextModels.includes(current.model) ? current.model : nextModels[0] || current.model,
       }));
       setVerifiedSignature(signature);
+      await saveProfileStatus("verified").catch(() => {});
     } catch (verifyError) {
       setVerifiedSignature("");
       setError(verifyError.message);
+      try {
+        await saveProfileStatus("down");
+      } catch {
+        // Preserve the connection failure as the useful error shown to the user.
+      }
     } finally {
       setVerifying(false);
     }
-  }, [signature, verification.apiKey, verification.apiMode, verification.baseUrl, verification.providerName]);
+  }, [saveProfileStatus, signature, verification.apiKey, verification.apiMode, verification.baseUrl, verification.providerName]);
 
   useEffect(() => {
     if (
@@ -880,7 +903,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
                 {filteredProfiles.map((profile) => (
                   <button key={profile.id} type="button" onClick={() => loadEndpoint(profile.id)} disabled={profileLoading || saving || verifying} className={`w-full rounded-lg border px-2.5 py-2 text-left transition disabled:opacity-50 ${selectedId === profile.id ? "border-cyan-300/60 bg-cyan-300/[0.07]" : "border-white/10 bg-[#071219]/70 hover:border-white/20"}`}>
                     <span className="flex items-center gap-2">
-                      <i className={`size-2 shrink-0 rounded-full ${profile.status === "verified" ? "bg-emerald-300" : "bg-amber-300"}`} />
+                      <i className={`size-2 shrink-0 rounded-full ${profile.status === "verified" ? "bg-emerald-300" : profile.status === "down" ? "bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.45)]" : "bg-amber-300"}`} />
                       <span className="min-w-0 flex-1 truncate text-xs font-semibold text-slate-200">{profile.providerName}</span>
                       {profile.isActive && <span className="rounded-full bg-cyan-300/10 px-2 py-0.5 text-[9px] font-semibold text-cyan-200">Active</span>}
                     </span>
@@ -921,6 +944,7 @@ function EndpointModal({ config, profiles, apiKey = "", initialModels = [], onSa
               </div>
 
               {verified && <div className="mt-3 flex items-center justify-between rounded-lg border border-emerald-300/15 bg-emerald-300/[0.06] px-3 py-2 text-xs text-emerald-200"><span className="flex items-center gap-2"><Check className="size-4" />Endpoint verified</span><span className="text-[10px] text-emerald-300/70">Ready</span></div>}
+              {!verified && selectedProfile?.status === "down" && !verifying && <div className="mt-3 flex items-center justify-between rounded-lg border border-red-400/20 bg-red-400/[0.06] px-3 py-2 text-xs text-red-200"><span className="flex items-center gap-2"><X className="size-4" />Endpoint unavailable</span><span className="text-[10px] text-red-300/70">Down</span></div>}
 
               {verified && (
                 <div className="mt-3">
@@ -1613,6 +1637,10 @@ export default function ChatAiView({ compact = false, pageContext = null }) {
     setAvailableModels([]);
   }
 
+  function handleProfilesChanged(nextProfiles) {
+    setProfiles(nextProfiles);
+  }
+
   async function selectChatModel(event) {
     const [profileId, model] = parseProfileModelValue(event.target.value);
     if (!profileId || !model || modelSaving) return;
@@ -1762,7 +1790,7 @@ export default function ChatAiView({ compact = false, pageContext = null }) {
         )}
       </div>
 
-      {configOpen && <EndpointModal config={config} profiles={profiles} apiKey={clientApiKey} initialModels={availableModels} onSaved={handleConfigSaved} onDeleted={handleConfigDeleted} onClose={() => setConfigOpen(false)} />}
+      {configOpen && <EndpointModal config={config} profiles={profiles} apiKey={clientApiKey} initialModels={availableModels} onSaved={handleConfigSaved} onDeleted={handleConfigDeleted} onProfilesChanged={handleProfilesChanged} onClose={() => setConfigOpen(false)} />}
 
       {conversationToDelete && (
         <Modal title="Delete conversation?" onClose={() => !deleting && setConversationToDelete(null)}>

@@ -298,7 +298,11 @@ function normalizeImportedSecret(secret) {
 }
 
 function normalizeImportedNote(note) {
-  return { title: note.title || "Untitled note", content: note.content || "" };
+  return {
+    title: note.title || "Untitled note",
+    content: note.content || "",
+    isPinned: note.isPinned === true || note.pinned === true,
+  };
 }
 
 function normalizeImportedAuthenticator(entry) {

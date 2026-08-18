@@ -625,14 +625,10 @@ export async function executeVaultAiTool(name, rawArgs, { approvedActionKey = ""
       body: JSON.stringify(pick(args, ["title", "content"])),
     }, "Unable to update the note.");
   } else if (name === "append_to_note") {
-    const notes = await apiTool("/notes", {}, "Unable to load the note.");
-    const note = (notes.data || []).find((item) => item.id === args.id);
-    if (!note) throw new Error("Note not found.");
-    const content = [note.content?.trimEnd(), args.content.trim()].filter(Boolean).join("\n\n");
-    result = await apiTool(`/notes/${encodeURIComponent(args.id)}`, {
-      method: "PATCH",
+    result = await apiTool(`/notes/${encodeURIComponent(args.id)}/append`, {
+      method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content: args.content }),
     }, "Unable to append to the note.");
   } else if (name === "delete_note") {
     result = await apiTool(`/notes/${encodeURIComponent(args.id)}`, { method: "DELETE" }, "Unable to delete the note.");

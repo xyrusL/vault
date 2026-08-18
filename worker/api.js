@@ -352,7 +352,6 @@ async function currentUser(request, env) {
   const token = getSessionToken(request, env)
   if (!token) return null
   const tokenHash = await hashSessionToken(token)
-  const browserHash = await hashBrowserSignature(request)
   return env.DB.prepare(`
     SELECT users.id, users.email, users.role, users.display_name, users.must_change_password,
       users.two_factor_enabled
@@ -360,9 +359,8 @@ async function currentUser(request, env) {
     INNER JOIN users ON users.id = sessions.user_id
     WHERE sessions.token_hash = ?
       AND sessions.expires_at > CURRENT_TIMESTAMP
-      AND sessions.user_agent_hash = ?
       AND users.is_active = 1
-  `).bind(tokenHash, browserHash).first()
+  `).bind(tokenHash).first()
 }
 
 function createTotp(secret, label) {
@@ -1845,6 +1843,24 @@ async function activateAiConfig(request, env, user, connectionId) {
   return getAiClientConfig(request, env, user, connectionId)
 }
 
+async function updateAiConfigStatus(request, env, user, connectionId) {
+  const body = await readJson(request)
+  const status = body.status === 'down' ? 'down' : body.status === 'verified' ? 'verified' : null
+  if (!status) throw new ClientError('AI endpoint status is invalid')
+  const connection = await env.DB.prepare(
+    'SELECT id FROM ai_connections WHERE id = ? AND user_id = ?',
+  ).bind(connectionId, user.id).first()
+  if (!connection) return json({ error: 'AI endpoint not found' }, 404, request, env)
+
+  await env.DB.prepare(`
+    UPDATE ai_connections SET status = ?,
+      last_verified_at = CASE WHEN ? = 'verified' THEN CURRENT_TIMESTAMP ELSE last_verified_at END,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ? AND user_id = ?
+  `).bind(status, status, connectionId, user.id).run()
+  return getAiClientConfig(request, env, user, connectionId)
+}
+
 async function deleteAiConfig(request, env, user, connectionId = null) {
   const connection = await env.DB.prepare(`
     SELECT id, is_active FROM ai_connections
@@ -2038,6 +2054,7 @@ async function presentNote(note, env) {
     id: note.id,
     title: await decryptCredential(note.title_ciphertext, note.title_iv, env.CREDENTIALS_ENCRYPTION_KEY),
     content: await decryptCredential(note.content_ciphertext, note.content_iv, env.CREDENTIALS_ENCRYPTION_KEY),
+    isPinned: Boolean(note.is_pinned),
     createdAt: note.created_at,
     updatedAt: note.updated_at,
   }
@@ -2045,7 +2062,7 @@ async function presentNote(note, env) {
 
 async function getNoteRecord(env, userId, id) {
   return env.DB.prepare(`
-    SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, created_at, updated_at
+    SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, is_pinned, created_at, updated_at
     FROM notes
     WHERE id = ? AND user_id = ?
   `).bind(id, userId).first()
@@ -2053,10 +2070,10 @@ async function getNoteRecord(env, userId, id) {
 
 async function listNotes(request, env, user) {
   const { results } = await env.DB.prepare(`
-    SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, created_at, updated_at
+    SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, is_pinned, created_at, updated_at
     FROM notes
     WHERE user_id = ?
-    ORDER BY updated_at DESC, id DESC
+    ORDER BY is_pinned DESC, updated_at DESC, id DESC
     LIMIT 500
   `).bind(user.id).all()
   const notes = await Promise.all((results || []).map((note) => presentNote(note, env)))
@@ -2067,6 +2084,8 @@ async function createNote(request, env, user) {
   const body = await readJson(request)
   const title = cleanText(body.title, 'Title', 200) || 'Untitled note'
   const content = cleanText(body.content, 'Content', 12000)
+  if (body.isPinned !== undefined && typeof body.isPinned !== 'boolean') throw new ClientError('Pin state must be true or false')
+  const isPinned = body.isPinned === true
   const id = crypto.randomUUID()
   const [encryptedTitle, encryptedContent] = await Promise.all([
     encryptPassword(title, env.CREDENTIALS_ENCRYPTION_KEY),
@@ -2080,9 +2099,9 @@ async function createNote(request, env, user) {
   })
   await env.DB.batch([
     env.DB.prepare(`
-      INSERT INTO notes (id, user_id, title_ciphertext, title_iv, content_ciphertext, content_iv)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).bind(id, user.id, encryptedTitle.ciphertext, encryptedTitle.iv, encryptedContent.ciphertext, encryptedContent.iv),
+      INSERT INTO notes (id, user_id, title_ciphertext, title_iv, content_ciphertext, content_iv, is_pinned)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(id, user.id, encryptedTitle.ciphertext, encryptedTitle.iv, encryptedContent.ciphertext, encryptedContent.iv, isPinned ? 1 : 0),
     audit,
   ])
   return json({ data: await presentNote(await getNoteRecord(env, user.id, id), env) }, 201, request, env)
@@ -2093,10 +2112,12 @@ async function updateNote(request, env, user, id) {
   if (!existing) return json({ error: 'Note not found' }, 404, request, env)
 
   const body = await readJson(request)
-  if (body.title === undefined && body.content === undefined) throw new ClientError('Title or content is required')
+  if (body.title === undefined && body.content === undefined && body.isPinned === undefined) throw new ClientError('Title, content, or pin state is required')
+  if (body.isPinned !== undefined && typeof body.isPinned !== 'boolean') throw new ClientError('Pin state must be true or false')
   const current = await presentNote(existing, env)
   const title = body.title === undefined ? current.title : cleanText(body.title, 'Title', 200) || 'Untitled note'
   const content = body.content === undefined ? current.content : cleanText(body.content, 'Content', 12000)
+  const isPinned = body.isPinned === undefined ? current.isPinned : body.isPinned
   const [encryptedTitle, encryptedContent] = await Promise.all([
     encryptPassword(title, env.CREDENTIALS_ENCRYPTION_KEY),
     encryptPassword(content, env.CREDENTIALS_ENCRYPTION_KEY),
@@ -2110,9 +2131,37 @@ async function updateNote(request, env, user, id) {
   await env.DB.batch([
     env.DB.prepare(`
       UPDATE notes
-      SET title_ciphertext = ?, title_iv = ?, content_ciphertext = ?, content_iv = ?, updated_at = CURRENT_TIMESTAMP
+      SET title_ciphertext = ?, title_iv = ?, content_ciphertext = ?, content_iv = ?, is_pinned = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ? AND user_id = ?
-    `).bind(encryptedTitle.ciphertext, encryptedTitle.iv, encryptedContent.ciphertext, encryptedContent.iv, id, user.id),
+    `).bind(encryptedTitle.ciphertext, encryptedTitle.iv, encryptedContent.ciphertext, encryptedContent.iv, isPinned ? 1 : 0, id, user.id),
+    audit,
+  ])
+  return json({ data: await presentNote(await getNoteRecord(env, user.id, id), env) }, 200, request, env)
+}
+
+async function appendNote(request, env, user, id) {
+  const existing = await getNoteRecord(env, user.id, id)
+  if (!existing) return json({ error: 'Note not found' }, 404, request, env)
+
+  const body = await readJson(request)
+  const addition = cleanText(body.content, 'Content', 12000)
+  if (!addition.trim()) throw new ClientError('Content is required')
+  const current = await presentNote(existing, env)
+  const content = [current.content.trimEnd(), addition.trim()].filter(Boolean).join('\n\n')
+  if (content.length > 12000) throw new ClientError('Content must be at most 12000 characters')
+  const encryptedContent = await encryptPassword(content, env.CREDENTIALS_ENCRYPTION_KEY)
+  const audit = await auditStatement(request, env, {
+    userId: user.id,
+    eventType: 'note.appended',
+    description: 'Content appended to note',
+    metadata: { noteId: id },
+  })
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE notes
+      SET content_ciphertext = ?, content_iv = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ? AND user_id = ?
+    `).bind(encryptedContent.ciphertext, encryptedContent.iv, id, user.id),
     audit,
   ])
   return json({ data: await presentNote(await getNoteRecord(env, user.id, id), env) }, 200, request, env)
@@ -2660,7 +2709,7 @@ async function exportBackup(request, env, url, user) {
         FROM vault_secrets WHERE user_id = ? ORDER BY created_at DESC
       `).bind(user.id).all(),
       env.DB.prepare(`
-        SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, created_at, updated_at
+        SELECT id, title_ciphertext, title_iv, content_ciphertext, content_iv, is_pinned, created_at, updated_at
         FROM notes WHERE user_id = ? ORDER BY created_at DESC
       `).bind(user.id).all(),
       env.DB.prepare(`
@@ -3732,6 +3781,11 @@ export default {
         if (request.method === 'PUT') return await updateAiConfig(request, env, authenticatedUser)
         if (request.method === 'DELETE') return await deleteAiConfig(request, env, authenticatedUser)
       }
+      const aiStatusMatch = url.pathname.match(/^\/v1\/ai\/config\/([0-9a-f-]+)\/status$/i)
+      if (aiStatusMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'POST') return await updateAiConfigStatus(request, env, authenticatedUser, aiStatusMatch[1])
+      }
       const aiConfigMatch = url.pathname.match(/^\/v1\/ai\/config\/([0-9a-f-]+)$/i)
       if (aiConfigMatch) {
         if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
@@ -3805,6 +3859,11 @@ export default {
         if (request.method === 'GET') return await getVaultSecret(request, env, authenticatedUser, vaultMatch[1])
         if (request.method === 'PATCH') return await updateVaultSecret(request, env, authenticatedUser, vaultMatch[1])
         if (request.method === 'DELETE') return await deleteVaultSecret(request, env, authenticatedUser, vaultMatch[1])
+      }
+      const noteAppendMatch = url.pathname.match(/^\/v1\/notes\/([0-9a-f-]+)\/append$/i)
+      if (noteAppendMatch) {
+        if (!authenticatedUser) return json({ error: 'User session required' }, 403, request, env)
+        if (request.method === 'POST') return await appendNote(request, env, authenticatedUser, noteAppendMatch[1])
       }
       const noteMatch = url.pathname.match(/^\/v1\/notes\/([0-9a-f-]+)$/i)
       if (noteMatch) {

@@ -19,6 +19,8 @@ test('AI configuration API supports profile editing, activation, and deletion', 
   assert.match(worker, /async function activateAiConfig/)
   assert.match(worker, /aiConfigMatch/)
   assert.match(worker, /aiActivateMatch/)
+  assert.match(worker, /aiStatusMatch/)
+  assert.match(worker, /async function updateAiConfigStatus/)
   assert.match(worker, /aiClientConfigMatch/)
   assert.match(worker, /profiles: results\.map\(presentAiConnection\)/)
 })
