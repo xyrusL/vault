@@ -373,6 +373,7 @@ function Dashboard() {
         activePage={activePage}
         onNavigate={navigate}
         onMore={() => setMenuOpen(true)}
+        moreOpen={menuOpen}
       />
 
       {accountModalOpen && (

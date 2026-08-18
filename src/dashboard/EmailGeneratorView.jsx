@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { apiFetch } from "../api";
 import { Modal, SelectField } from "./DashboardUi";
+import { clampPage, reconcileIds, toggleIds } from "./notesState";
 
 let emailGeneratorCache = null;
 
@@ -135,7 +136,7 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   }, [search]);
 
   useEffect(() => {
-    if (addressPage > addressPageCount) setAddressPage(addressPageCount);
+    if (addressPage !== clampPage(addressPage, addressPageCount)) setAddressPage(clampPage(addressPage, addressPageCount));
   }, [addressPage, addressPageCount]);
 
   useEffect(() => {
@@ -147,8 +148,13 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   }, [inboxAddressId, inboxFilter, inboxSearch]);
 
   useEffect(() => {
-    if (inboxPage > inboxPageCount) setInboxPage(inboxPageCount);
+    if (inboxPage !== clampPage(inboxPage, inboxPageCount)) setInboxPage(clampPage(inboxPage, inboxPageCount));
   }, [inboxPage, inboxPageCount]);
+
+  useEffect(() => {
+    setSelectedAddressIds((current) => reconcileIds(current, addresses));
+    setSelectedInboxMessageIds((current) => reconcileIds(current, messages));
+  }, [addresses, messages]);
 
   async function loadAddresses(preferredId = selectedAddressId) {
     const response = await apiFetch("/email/addresses");
@@ -507,32 +513,21 @@ export default function EmailGeneratorView({ onAddressesChange }) {
   }
 
   function toggleAddressSelection(addressId) {
-    setSelectedAddressIds((current) => current.includes(addressId)
-      ? current.filter((id) => id !== addressId)
-      : [...current, addressId]);
+    setSelectedAddressIds((current) => toggleIds(current, [addressId]));
   }
 
   function toggleInboxMessageSelection(messageId) {
-    setSelectedInboxMessageIds((current) => current.includes(messageId)
-      ? current.filter((id) => id !== messageId)
-      : [...current, messageId]);
+    setSelectedInboxMessageIds((current) => toggleIds(current, [messageId]));
   }
 
   function toggleInboxPageSelection() {
     const pageIds = pagedInboxMessages.map((message) => message.id);
-    const allSelected = pageIds.length > 0
-      && pageIds.every((id) => selectedInboxMessageIds.includes(id));
-    setSelectedInboxMessageIds((current) => allSelected
-      ? current.filter((id) => !pageIds.includes(id))
-      : [...new Set([...current, ...pageIds])]);
+    setSelectedInboxMessageIds((current) => toggleIds(current, pageIds));
   }
 
   function togglePageSelection() {
     const pageIds = pagedAddresses.map((address) => address.id);
-    const allSelected = pageIds.length > 0 && pageIds.every((id) => selectedAddressIds.includes(id));
-    setSelectedAddressIds((current) => allSelected
-      ? current.filter((id) => !pageIds.includes(id))
-      : [...new Set([...current, ...pageIds])]);
+    setSelectedAddressIds((current) => toggleIds(current, pageIds));
   }
 
   async function copyAddress(address) {

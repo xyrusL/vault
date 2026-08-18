@@ -1,7 +1,7 @@
 import { MoreHorizontal } from "lucide-react";
 import { mobileNavigationItems, pageDetails } from "../shared/navigation";
 
-export default function MobileNavigation({ activePage, onNavigate, onMore }) {
+export default function MobileNavigation({ activePage, onNavigate, onMore, moreOpen = false }) {
   const secondaryPageActive = !mobileNavigationItems.some((item) => item.id === activePage);
 
   return (
@@ -16,7 +16,7 @@ export default function MobileNavigation({ activePage, onNavigate, onMore }) {
             </button>
           );
         })}
-        <button type="button" onClick={onMore} className={`mobile-navigation-item ${secondaryPageActive ? "is-active" : ""}`} aria-label={secondaryPageActive ? `More, current page ${pageDetails[activePage]?.title}` : "More navigation"} aria-current={secondaryPageActive ? "page" : undefined}>
+        <button type="button" onClick={onMore} aria-expanded={moreOpen} className={`mobile-navigation-item ${secondaryPageActive ? "is-active" : ""}`} aria-label={secondaryPageActive ? `More, current page ${pageDetails[activePage]?.title}` : "More navigation"} aria-current={secondaryPageActive ? "page" : undefined}>
           <span className="mobile-navigation-icon"><MoreHorizontal /></span>
           <span>More</span>
         </button>

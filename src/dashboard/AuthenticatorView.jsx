@@ -135,6 +135,7 @@ export default function AuthenticatorView() {
   const [cameraError, setCameraError] = useState("");
   const fileInputRef = useRef(null);
   const issuerInputRef = useRef(null);
+  const accountDetailsRef = useRef(null);
   const videoRef = useRef(null);
   const cameraGuideRef = useRef(null);
   const detectedGuideRef = useRef(null);
@@ -178,6 +179,12 @@ export default function AuthenticatorView() {
   const preview = useMemo(() => makePreview(form, now), [form, now]);
   const autoFilled = Boolean(parseSetupUri(form.uri));
 
+  function scrollToAccountDetails() {
+    if (window.matchMedia("(max-width: 639px)").matches) {
+      window.requestAnimationFrame(() => accountDetailsRef.current?.scrollTo({ top: 0, behavior: "smooth" }));
+    }
+  }
+
   function updateForm(event) {
     const { name, value } = event.target;
     setForm((current) => {
@@ -196,6 +203,7 @@ export default function AuthenticatorView() {
       const parsed = parseSetupUri(uri);
       if (!parsed) throw new Error("The QR code contains an invalid authenticator setup URI.");
       setForm((current) => ({ ...current, ...parsed }));
+      scrollToAccountDetails();
     } catch (scanError) {
       setError(scanError.message);
     } finally {
@@ -223,6 +231,7 @@ export default function AuthenticatorView() {
       event.preventDefault();
       setError("");
       setForm((current) => ({ ...current, ...parsed }));
+      scrollToAccountDetails();
     }
   }
 
@@ -303,6 +312,7 @@ export default function AuthenticatorView() {
             setError("");
             setCameraError("");
             stopCamera();
+            scrollToAccountDetails();
           }, 350);
           return;
         }
@@ -415,7 +425,7 @@ export default function AuthenticatorView() {
       {loading ? (
         <div className="mt-6 flex min-h-60 items-center justify-center text-slate-400"><LoaderCircle className="mr-2 size-5 animate-spin" /> Loading codes</div>
       ) : filteredEntries.length ? (
-        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {filteredEntries.map((entry) => {
             const seconds = entry.period - (Math.floor(now / 1000) % entry.period);
             const code = makeCode(entry);
@@ -482,9 +492,9 @@ export default function AuthenticatorView() {
               <p className="mt-3 flex items-center justify-center gap-2 text-center text-xs leading-5 text-slate-400" aria-live="polite"><Sparkles className="size-3.5 shrink-0 text-cyan-400" /> Scanning automatically. Account details will appear after a valid QR code is detected.</p>
               </section>
             ) : (
-              <form onSubmit={addEntry} onPaste={handlePaste} className="mt-3 space-y-2.5">
+              <form onSubmit={addEntry} onPaste={handlePaste} className="authenticator-add-form mt-3 space-y-2.5">
             {error && <p className="rounded-lg border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200" role="alert">{error}</p>}
-            <section className="rounded-xl border border-cyan-100/15 bg-black/[0.08] p-3">
+            <section className="authenticator-add-method rounded-xl border border-cyan-100/15 bg-black/[0.08] p-3">
               <div className="flex items-center justify-between gap-3">
                 <h3 className="text-sm font-semibold text-slate-200">Add account using</h3>
               </div>
@@ -523,7 +533,7 @@ export default function AuthenticatorView() {
               className="sr-only"
               onChange={(event) => { importQrImage(event.target.files[0]); event.target.value = ""; }}
             />
-            <section className="rounded-xl border border-cyan-100/15 bg-black/[0.08] p-3">
+            <section ref={accountDetailsRef} className="authenticator-details-scroll rounded-xl border border-cyan-100/15 bg-black/[0.08] p-3">
               <div className="mb-3 flex flex-wrap items-center gap-2">
                 <h3 className="text-sm font-semibold text-slate-200">Account details</h3>
                 {autoFilled && <span className="rounded-full bg-cyan-400/10 px-2.5 py-1 text-[0.65rem] font-medium text-cyan-300">Auto-filled after scan</span>}
@@ -531,7 +541,7 @@ export default function AuthenticatorView() {
               <label className="block min-w-0">
                 <span className="mb-1.5 flex items-center justify-between gap-3 text-xs text-slate-400">
                   <span>Setup URI (otpauth://)</span>
-                  <button type="button" onClick={() => issuerInputRef.current?.focus()} className="text-cyan-300 hover:text-cyan-200">or enter manually</button>
+                  <button type="button" onClick={() => { scrollToAccountDetails(); issuerInputRef.current?.focus(); }} className="text-cyan-300 hover:text-cyan-200">or enter manually</button>
                 </span>
                 <input name="uri" value={form.uri} onChange={updateForm} placeholder="otpauth://totp/..." autoComplete="off" className="form-control !min-h-10 bg-[#06121a] !px-3 !py-2" />
               </label>
@@ -545,7 +555,7 @@ export default function AuthenticatorView() {
               </div>
               {!form.uri.trim() && form.secret.trim() && !preview && <p className="mt-2 text-xs text-amber-300">Enter a valid Base32 setup key to generate the verification code.</p>}
             </section>
-            <div className="flex justify-end gap-3"><button type="button" onClick={closeAddModal} disabled={busy} className="h-10 rounded-lg border border-white/10 px-5 text-sm text-slate-300 transition hover:bg-white/5">Cancel</button><button disabled={busy} className="flex h-10 items-center gap-2 rounded-lg border border-cyan-200/40 bg-gradient-to-r from-cyan-500 to-cyan-400 px-5 text-sm font-semibold text-[#021012] shadow-[0_8px_24px_rgba(6,182,212,0.18)] transition hover:brightness-110 disabled:opacity-50">{busy && <LoaderCircle className="size-4 animate-spin" />} Save account</button></div>
+             <div className="authenticator-add-actions flex justify-end gap-3"><button type="button" onClick={closeAddModal} disabled={busy} className="h-10 rounded-lg border border-white/10 px-5 text-sm text-slate-300 transition hover:bg-white/5">Cancel</button><button disabled={busy} className="flex h-10 items-center gap-2 rounded-lg border border-cyan-200/40 bg-gradient-to-r from-cyan-500 to-cyan-400 px-5 text-sm font-semibold text-[#021012] shadow-[0_8px_24px_rgba(6,182,212,0.18)] transition hover:brightness-110 disabled:opacity-50">{busy && <LoaderCircle className="size-4 animate-spin" />} Save account</button></div>
               </form>
             )}
           </div>

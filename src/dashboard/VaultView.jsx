@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Bot,
   Check,
   Clipboard,
   Code2,
@@ -212,11 +211,11 @@ function SecretEditor({ initialValue = emptyDraft, title, submitLabel, busy, err
             </div>
           </div>
         ) : (
-          <label className="block">
+          <label className="vault-secret-field block">
             <span className="mb-2 flex items-center justify-between gap-3"><span className="text-xs text-slate-400">Secret value</span><button type="button" onClick={() => { setEnvironmentEntries(draft.value ? [{ key: "PRIMARY_KEY", value: draft.value }] : [{ key: "", value: "" }]); setMultipleValues(true); }} className="flex items-center gap-1.5 text-xs font-medium text-cyan-300 hover:text-cyan-200"><Plus className="size-3.5" />Add multiple keys</button></span>
             <span className="relative block">
-              <textarea name="value" value={draft.value} onChange={update} maxLength={12000} required rows={3} autoComplete="new-password" data-1p-ignore data-lpignore="true" spellCheck="false" placeholder="Paste the secret value" aria-label={`Secret value — ${visible ? "visible" : "hidden"}`} className={`form-control min-h-24 resize-y pr-12 font-mono text-xs leading-5 ${visible ? "" : "[-webkit-text-security:disc]"}`} />
-              <button type="button" onClick={() => setVisible((current) => !current)} className="absolute right-2 top-2 grid size-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white" aria-label={visible ? "Hide secret" : "Show secret"}>{visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button>
+              <textarea name="value" value={draft.value} onChange={update} maxLength={12000} required rows={3} autoComplete="new-password" data-1p-ignore data-lpignore="true" spellCheck="false" placeholder="Paste the secret value" aria-label={`Secret value — ${visible ? "visible" : "hidden"}`} className={`form-control min-h-24 resize-y pt-3 pr-16 font-mono text-xs leading-5 ${visible ? "" : "[-webkit-text-security:disc]"}`} />
+              <button type="button" onClick={() => setVisible((current) => !current)} className="absolute right-1 top-1 grid size-9 place-items-center rounded-lg bg-[#071016] text-slate-400 transition hover:bg-white/5 hover:text-white" aria-label={visible ? "Hide secret" : "Show secret"}>{visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button>
             </span>
           </label>
         )}
@@ -452,16 +451,15 @@ export default function VaultView() {
       {editor && <SecretEditor initialValue={editor} title={editor.id ? "Edit Vault item" : "Add to Vault"} submitLabel={editor.id ? "Save changes" : "Encrypt and save"} busy={busy} error={error} onClose={() => !busy && setEditor(null)} onSubmit={saveSecret} />}
 
       {selected && (
-        <Modal title="Vault item" onClose={() => setSelected(null)} size="account">
-          <div className="mt-5">
+        <Modal title="Vault item" onClose={() => setSelected(null)} className="vault-item-modal">
+          <div className="mt-4">
             <div className="flex items-center gap-3"><span className={`grid size-11 place-items-center rounded-xl border ${accents[typeDetails(selected.type).accent]}`}>{(() => { const Icon = typeDetails(selected.type).icon; return <Icon className="size-5" />; })()}</span><div className="min-w-0"><p className="truncate font-semibold text-white">{selected.name}</p><p className="mt-0.5 text-xs text-slate-500">{typeDetails(selected.type).label}</p></div></div>
-            <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
+            <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3.5">
               <div className="flex items-center justify-between"><span className="text-xs font-medium text-slate-400">Secret value</span><div className="flex gap-1"><button type="button" onClick={() => setVisible((current) => !current)} className="grid size-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white" aria-label={visible ? "Hide secret" : "Reveal secret"}>{visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}</button><button type="button" onClick={copySecret} className="grid size-9 place-items-center rounded-lg text-slate-400 hover:bg-white/5 hover:text-white" aria-label="Copy secret">{copied ? <Check className="size-4 text-emerald-300" /> : <Clipboard className="size-4" />}</button></div></div>
               <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-6 text-slate-200">{visible ? presentedSecretValue(selected) : "••••••••••••••••••••••••"}</pre>
             </div>
-            {selected.notes && <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.02] p-4"><p className="text-xs font-medium text-slate-400">Private notes</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">{selected.notes}</p></div>}
-            <div className="mt-4 flex gap-3 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.04] p-4"><Bot className="mt-0.5 size-4 shrink-0 text-emerald-300" /><div><p className="text-sm font-medium text-white">Protected AI access</p><p className="mt-1 text-xs leading-5 text-slate-500">AI can find this item and request a confirmed local copy, but it cannot read the raw value.</p></div></div>
-            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between"><button type="button" onClick={() => { setDeleteTarget(selected); setSelected(null); }} className="flex h-10 items-center justify-center gap-2 rounded-lg px-3 text-sm text-red-300 hover:bg-red-500/10"><Trash2 className="size-4" />Delete</button><div className="flex gap-3"><button type="button" onClick={() => setSelected(null)} className="h-10 flex-1 rounded-lg border border-white/10 px-4 text-sm text-slate-300 sm:flex-none">Close</button><button type="button" onClick={editSelected} className="h-10 flex-1 rounded-lg bg-cyan-400 px-4 text-sm font-semibold text-[#031014] sm:flex-none">Edit item</button></div></div>
+            {selected.notes && <div className="mt-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-3.5"><p className="text-xs font-medium text-slate-400">Private notes</p><p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-slate-300">{selected.notes}</p></div>}
+            <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between"><button type="button" onClick={() => { setDeleteTarget(selected); setSelected(null); }} className="flex h-10 items-center justify-center gap-2 rounded-lg bg-red-500/10 px-3 text-sm text-red-300 transition hover:bg-red-500/20"><Trash2 className="size-4" />Delete</button><div className="flex gap-2"><button type="button" onClick={() => setSelected(null)} className="h-10 flex-1 rounded-lg border border-white/10 px-4 text-sm text-slate-300 sm:flex-none">Close</button><button type="button" onClick={editSelected} className="h-10 flex-1 rounded-lg bg-cyan-400 px-4 text-sm font-semibold text-[#031014] sm:flex-none">Edit item</button></div></div>
           </div>
         </Modal>
       )}
